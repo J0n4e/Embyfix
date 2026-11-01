@@ -3,8 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 APP=dist/EmbyFlix.app
-swift build -c release
-BIN=$(swift build -c release --show-bin-path)
+swift build -c release --arch arm64 --arch x86_64
+BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
