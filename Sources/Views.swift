@@ -468,6 +468,26 @@ struct ListRow: View {
     }
 }
 
+/// Green badge: a check when the count is 0, otherwise the number.
+struct CountBadge: View {
+    let count: Int?
+    var body: some View {
+        if let n = count {
+            if n == 0 {
+                Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundColor(.white)
+                    .frame(width: 24, height: 24).background(Circle().fill(WatchBadge.green))
+                    .shadow(color: .black.opacity(0.5), radius: 3).help("All watched")
+            } else {
+                Text(n > 99 ? "99+" : "\(n)").font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                    .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 24)
+                    .background(Capsule().fill(WatchBadge.green))
+                    .shadow(color: .black.opacity(0.5), radius: 3)
+                    .help("\(n) unwatched episode\(n == 1 ? "" : "s")")
+            }
+        }
+    }
+}
+
 /// Top-right poster badge: green check when watched, unwatched-episode count for series.
 struct WatchBadge: View {
     let item: Item
@@ -760,6 +780,14 @@ struct DetailView: View {
     }
     var simple: Bool { item.isSeries || item.isBox }
 
+    /// Pre-selects the preferred subtitle language when "Always load" is on.
+    func applyPreferredSub() {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: "subAlways"), let lang = d.string(forKey: "subLang"), !lang.isEmpty,
+              let idx = preferredSub(src?.MediaStreams ?? [], lang: lang) else { return }
+        subIdx = idx
+    }
+
     /// `from` nil means resume where it was left off; 0 starts over.
     func playNow(from: Double? = nil) {
         if item.isSeries, let ep = nextEp { playEpisode(ep, from: from); return }
@@ -769,7 +797,8 @@ struct DetailView: View {
                                    audio: audioChanged ? audioIdx : nil,
                                    sub: subIdx >= 0 ? subIdx : nil,
                                    maxBitrate: quality > 0 ? quality : nil,
-                                   start: from ?? emby.resumeAt(item))
+                                   start: from ?? emby.resumeAt(item),
+                                   noSub: subIdx < 0)
     }
 
     /// The item the big Play button acts on (next-up episode for a series).
@@ -804,6 +833,7 @@ struct DetailView: View {
         .task {
             full = await emby.full(item.id)
             audioIdx = defaultAudio
+            applyPreferredSub()
             if item.isSeries {
                 async let eps = emby.episodes(item.id)
                 async let ss = emby.seasons(item.id)
@@ -814,7 +844,7 @@ struct DetailView: View {
             else if item.isBox { kids = await emby.children(item.id) }
             if !item.isEpisode { similar = await emby.similar(item.id) }
         }
-        .onChange(of: srcIdx) { audioIdx = defaultAudio; subIdx = -1 }
+        .onChange(of: srcIdx) { audioIdx = defaultAudio; subIdx = -1; applyPreferredSub() }
     }
 
     // Header: poster + info + pickers + buttons
@@ -982,6 +1012,12 @@ struct DetailView: View {
         return seasonItems.first { ($0.IndexNumber ?? 0) == n }?.Name ?? "Season \(n)"
     }
 
+    /// Unwatched episodes in a season (nil while episodes are loading).
+    func unwatched(_ n: Int) -> Int? {
+        let eps = kids.filter { ($0.ParentIndexNumber ?? 0) == n }
+        return eps.isEmpty ? nil : eps.filter { !emby.isPlayed($0) }.count
+    }
+
     func seasonPoster(_ n: Int) -> some View {
         let sItem: Item? = seasonItems.first { ($0.IndexNumber ?? 0) == n }
         let title: String = seasonTitle(n)
@@ -994,6 +1030,7 @@ struct DetailView: View {
                     ZStack { Color(white: 0.15); Text(title) }
                 }
                 .frame(width: 170, height: 255).clipped().cornerRadius(8)
+                .overlay(alignment: .topTrailing) { CountBadge(count: unwatched(n)).padding(8) }
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: selected ? 3 : 0))
                 .shadow(radius: 6)
                 Text(title).font(.body).foregroundColor(selected ? .primary : .secondary)
@@ -1200,6 +1237,8 @@ final class PlayerModel: ObservableObject {
     @Published var player: AVPlayer?
     @Published var error = ""
     @Published var caption = ""
+    @Published var loadingSubs = false
+    private var subGen = 0
     // Current state shown in the player menus
     @Published var streams: [MStream] = []
     @Published var sub: Int? = nil
@@ -1222,6 +1261,7 @@ final class PlayerModel: ObservableObject {
     private weak var emby: Emby?
     private var lastReport: Double = 0
     private var reportedStart = false
+    private var session: Emby.PlaySession?
 
     var audioStreams: [MStream] { streams.filter { $0.`Type` == "Audio" } }
     var subStreams: [MStream] { streams.filter { $0.`Type` == "Subtitle" } }
@@ -1246,13 +1286,23 @@ final class PlayerModel: ObservableObject {
         let auds = streams.filter { $0.`Type` == "Audio" }
         audio = req.audio ?? (auds.first { $0.IsDefault == true } ?? auds.first)?.Index
         var req = req
-        // Text subtitles are drawn by the app; only image subtitles are burned in by the server.
-        if let sub = req.sub, let c = await emby.subtitleCues(req.item.id, req.sourceId, sub) {
-            cues = c; req.sub = nil
+        // "Always load preferred subtitle language"
+        let d = UserDefaults.standard
+        if req.sub == nil, !req.noSub, d.bool(forKey: "subAlways"), let lang = d.string(forKey: "subLang"), !lang.isEmpty,
+           let idx = preferredSub(streams, lang: lang) {
+            req.sub = idx; sub = idx; self.req?.sub = idx
+        }
+        // Text subtitles are drawn by the app and load in the background, so the video starts right away
+        // (embedded ones can take a while the first time). Image subtitles are burned in by the server.
+        if let s = req.sub, !isImageSub(s), !req.burnIn {
+            req.sub = nil
+            loadCues(emby, req.item.id, req.sourceId, s)
         }
         guard let u = await emby.resolveStream(req, direct: direct) else {
             error = "Couldn't get a stream from the server."; return
         }
+        let method = u.absoluteString.contains("Static=true") ? "DirectPlay" : "Transcode"
+        session = Emby.PlaySession(itemId: req.item.id, sourceId: req.sourceId, method: method)
         let it = AVPlayerItem(url: u)
         obs = it.observe(\.status, options: [.new]) { [weak self] i, _ in
             if i.status == .failed {
@@ -1267,9 +1317,9 @@ final class PlayerModel: ObservableObject {
                         self.time = t
                         await self.player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
                     }
-                    if !self.reportedStart, let r = self.req {
+                    if !self.reportedStart, let ps = self.session {
                         self.reportedStart = true
-                        await self.emby?.reportStart(r.item.id, r.sourceId, self.now)
+                        await self.emby?.reportStart(ps, self.now)
                     }
                 }
             }
@@ -1292,19 +1342,39 @@ final class PlayerModel: ObservableObject {
         await start(emby, r)
     }
 
+    func isImageSub(_ idx: Int) -> Bool {
+        imageSubCodecs.contains((streams.first { $0.Index == idx }?.Codec ?? "").lowercased())
+    }
+
+    /// Downloads a text subtitle in the background; playback keeps going meanwhile.
+    private func loadCues(_ emby: Emby, _ itemId: String, _ sourceId: String?, _ idx: Int) {
+        subGen += 1
+        let gen = subGen
+        cues = []; caption = ""; loadingSubs = true
+        Task {
+            let c = await emby.subtitleCues(itemId, sourceId, idx)
+            guard gen == subGen else { return }   // user picked another track meanwhile
+            loadingSubs = false
+            if let c { cues = c; updateCaption(now) }
+            else { await restart(emby) { $0.sub = idx; $0.burnIn = true } }   // couldn't read as text: burn it in
+        }
+    }
+
     func setSub(_ emby: Emby, _ idx: Int?) async {
         guard idx != sub, let r = req else { return }
-        // Text subtitles switch instantly; image subtitles need a server burn-in restart.
+        let wasBurned = sub.map(isImageSub) ?? false
         if let idx {
-            if let c = await emby.subtitleCues(r.item.id, r.sourceId, idx) {
-                cues = c; sub = idx; req?.sub = idx; updateCaption(now)
-            } else {
+            if isImageSub(idx) {
                 await restart(emby) { $0.sub = idx }
+            } else {
+                sub = idx; req?.sub = idx
+                if wasBurned { await restart(emby) { $0.sub = idx } }
+                else { loadCues(emby, r.item.id, r.sourceId, idx) }
             }
         } else {
-            let wasBurned = cues.isEmpty && sub != nil
-            cues = []; caption = ""; sub = nil; req?.sub = nil
-            if wasBurned { await restart(emby) { $0.sub = nil } }
+            subGen += 1
+            cues = []; caption = ""; loadingSubs = false; sub = nil; req?.sub = nil; req?.noSub = true
+            if wasBurned { await restart(emby) { $0.sub = nil; $0.noSub = true } }
         }
     }
 
@@ -1338,10 +1408,10 @@ final class PlayerModel: ObservableObject {
 
     /// Tells the server the current position every 10 s (and on pause/play), so it can resume later.
     private func sendProgress(_ t: Double, force: Bool = false) {
-        guard reportedStart, let r = req, t.isFinite, force || abs(t - lastReport) >= 10 else { return }
+        guard reportedStart, let ps = session, t.isFinite, force || abs(t - lastReport) >= 10 else { return }
         lastReport = t
         let paused = !playing
-        Task { await emby?.reportProgress(r.item.id, r.sourceId, t, paused: paused) }
+        Task { await emby?.reportProgress(ps, t, paused: paused) }
     }
 
     func togglePlay() {
@@ -1372,12 +1442,13 @@ final class PlayerModel: ObservableObject {
     }
 
     func stop() {
-        if let p = player, let r = req, reportedStart {
+        if let p = player, let ps = session, reportedStart {
             let t = p.currentTime().seconds
             let d = p.currentItem?.duration.seconds ?? 0
             let e = emby
-            Task { await e?.reportStopped(r.item.id, r.sourceId, t.isFinite ? t : 0, duration: d.isFinite ? d : 0) }
+            Task { await e?.reportStopped(ps, t.isFinite ? t : 0, duration: d.isFinite ? d : 0) }
         }
+        session = nil
         reportedStart = false; lastReport = 0
         if let o = timeObs { player?.removeTimeObserver(o) }
         timeObs = nil
@@ -1529,6 +1600,18 @@ struct PlayerView: View {
     // MARK: Subtitles drawn by the app
 
     @ViewBuilder func subtitleLayer(_ size: CGSize) -> some View {
+        if model.loadingSubs {
+            VStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading subtitles…").font(.system(size: 14, weight: .medium))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Capsule().fill(Color.black.opacity(0.6)))
+                .padding(.bottom, size.height * subBottom / 100)
+            }.frame(maxWidth: .infinity).allowsHitTesting(false)
+        }
         if !model.caption.isEmpty {
             let fs = max(14, size.height * (Self.sizes.first { $0.0 == subTextSize }?.2 ?? 0.045))
             let color = Self.colors.first { $0.0 == subColor }?.2 ?? .white

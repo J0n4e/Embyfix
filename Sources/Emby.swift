@@ -32,6 +32,8 @@ struct PlayRequest: Identifiable {
     var sub: Int?
     var maxBitrate: Int?
     var start: Double? = nil      // seconds to resume from
+    var noSub = false             // user chose "Off": don't auto-load the preferred language
+    var burnIn = false            // subtitle couldn't be read as text: have the server burn it in
     var id: String { item.id }
     var transcode: Bool { audio != nil || sub != nil || maxBitrate != nil }
 }
@@ -345,26 +347,35 @@ final class Emby: ObservableObject {
         _ = try? await URLSession.shared.data(for: r)
     }
 
-    private func progressBody(_ itemId: String, _ sourceId: String?, _ sec: Double, paused: Bool = false) -> [String: Any] {
-        var b: [String: Any] = ["ItemId": itemId, "PositionTicks": Int64(max(0, sec) * 10_000_000),
-                                "IsPaused": paused, "CanSeek": true]
-        if let sourceId { b["MediaSourceId"] = sourceId }
+    /// One playback as the server tracks it. Emby rejects reports without a PlaySessionId (HTTP 400).
+    struct PlaySession {
+        let itemId: String
+        let sourceId: String?
+        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let method: String          // DirectPlay | DirectStream | Transcode
+    }
+
+    private func progressBody(_ s: PlaySession, _ sec: Double, paused: Bool = false) -> [String: Any] {
+        var b: [String: Any] = ["ItemId": s.itemId, "PositionTicks": Int64(max(0, sec) * 10_000_000),
+                                "IsPaused": paused, "CanSeek": true,
+                                "PlaySessionId": s.id, "PlayMethod": s.method]
+        if let sourceId = s.sourceId { b["MediaSourceId"] = sourceId }
         return b
     }
 
-    func reportStart(_ itemId: String, _ sourceId: String?, _ sec: Double) async {
-        await postJSON("/Sessions/Playing", progressBody(itemId, sourceId, sec))
+    func reportStart(_ s: PlaySession, _ sec: Double) async {
+        await postJSON("/Sessions/Playing", progressBody(s, sec))
     }
 
-    func reportProgress(_ itemId: String, _ sourceId: String?, _ sec: Double, paused: Bool) async {
-        await postJSON("/Sessions/Playing/Progress", progressBody(itemId, sourceId, sec, paused: paused))
+    func reportProgress(_ s: PlaySession, _ sec: Double, paused: Bool) async {
+        await postJSON("/Sessions/Playing/Progress", progressBody(s, sec, paused: paused))
     }
 
-    func reportStopped(_ itemId: String, _ sourceId: String?, _ sec: Double, duration: Double) async {
+    func reportStopped(_ s: PlaySession, _ sec: Double, duration: Double) async {
         let finished = duration > 0 && sec / duration > 0.9
-        positions[itemId] = finished ? 0 : sec
-        if finished { played[itemId] = true }
-        await postJSON("/Sessions/Playing/Stopped", progressBody(itemId, sourceId, sec))
+        positions[s.itemId] = finished ? 0 : sec
+        if finished { played[s.itemId] = true }
+        await postJSON("/Sessions/Playing/Stopped", progressBody(s, sec))
     }
 
     func isFav(_ it: Item) -> Bool { faved[it.id] ?? it.UserData?.IsFavorite ?? false }
@@ -437,8 +448,11 @@ final class Emby: ObservableObject {
     func subtitleCues(_ itemId: String, _ sourceId: String?, _ index: Int) async -> [Cue]? {
         var sid = sourceId
         if sid == nil { sid = await full(itemId)?.MediaSources?.first?.Id }
-        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt?api_key=\(token)"),
-              let (data, resp) = try? await URLSession.shared.data(from: u),
+        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt?api_key=\(token)") else { return nil }
+        // Embedded subtitles are extracted from the whole video file the first time, which can take minutes.
+        var r = URLRequest(url: u)
+        r.timeoutInterval = 600
+        guard let (data, resp) = try? await URLSession.shared.data(for: r),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return nil }
         let cues = Cue.parseSRT(text)
@@ -492,6 +506,22 @@ final class Emby: ObservableObject {
     }
 }
 
+
+/// Subtitle formats the server can only burn into the video (pictures, not text).
+let imageSubCodecs: Set<String> = ["pgs", "pgssub", "hdmv_pgs_subtitle", "dvdsub", "dvd_subtitle", "dvbsub", "dvb_subtitle", "vobsub", "xsub"]
+
+/// Preferred-language subtitle track: text formats first, then any.
+func preferredSub(_ streams: [MStream], lang: String) -> Int? {
+    let subs = streams.filter { $0.`Type` == "Subtitle" && subLangName($0).lowercased() == lang.lowercased() }
+    let text = subs.first { !imageSubCodecs.contains(($0.Codec ?? "").lowercased()) }
+    return (text ?? subs.first)?.Index
+}
+
+/// Language name from "English (SRT)" etc., so "eng" and "en" tracks group together.
+func subLangName(_ st: MStream) -> String {
+    let t = st.DisplayTitle ?? st.Language ?? "Unknown"
+    return t.components(separatedBy: " (").first ?? t
+}
 
 struct Cue {
     let start: Double

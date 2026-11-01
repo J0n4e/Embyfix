@@ -252,8 +252,17 @@ struct SubtitleSettings: View {
     @AppStorage("subShadowStyle") private var subShadow = "drop"
     @AppStorage("subBg") private var subBg = "none"
     @AppStorage("subBottom") private var subBottom = 10.0
+    @AppStorage("subAlways") private var subAlways = false
+    @AppStorage("subLang") private var subLang = "english"
 
     var body: some View {
+        SettingsGroup(title: "Subtitle language",
+                      note: "When on, every movie and episode starts with subtitles in this language if it has them (text subtitles such as SRT are preferred). Choosing Off for a movie, or in the player, still turns them off.") {
+            Toggle("Always load preferred subtitle language", isOn: $subAlways)
+            SettingRow(label: "Preferred language") {
+                menuPicker($subLang, SeriesSettings.languages.map { ($0.lowercased(), $0) })
+            }.disabled(!subAlways)
+        }
         SettingsGroup(title: "Subtitle appearance") {
             SettingRow(label: "Text size") { menuPicker($subTextSize, PlayerView.sizes.map { ($0.0, $0.1) }) }
             SettingRow(label: "Text color") { menuPicker($subColor, PlayerView.colors.map { ($0.0, $0.1) }) }
