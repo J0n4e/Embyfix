@@ -14,7 +14,7 @@ struct Item: Identifiable, Decodable, Hashable {
     let BackdropImageTags: [String]?
     let CollectionType: String?
     let UserData: UD?
-    struct UD: Decodable, Hashable { let Played: Bool?; let IsFavorite: Bool?; let PlayedPercentage: Double? }
+    struct UD: Decodable, Hashable { let Played: Bool?; let IsFavorite: Bool?; let PlayedPercentage: Double?; let UnplayedItemCount: Int?; let PlaybackPositionTicks: Int64? }
     var id: String { Id }
     var backdropId: String? { (BackdropImageTags ?? []).isEmpty ? ParentBackdropItemId : Id }
     var posterId: String { `Type` == "Episode" ? (SeriesId ?? Id) : Id }
@@ -31,6 +31,7 @@ struct PlayRequest: Identifiable {
     var audio: Int?
     var sub: Int?
     var maxBitrate: Int?
+    var start: Double? = nil      // seconds to resume from
     var id: String { item.id }
     var transcode: Bool { audio != nil || sub != nil || maxBitrate != nil }
 }
@@ -91,6 +92,16 @@ struct LibPref: Identifiable, Codable, Hashable {
     var kind: String?
 }
 
+/// A server the user has signed in to; the token is kept so switching back needs no password.
+struct SavedServer: Codable, Identifiable, Hashable {
+    var url: String
+    var name: String
+    var user: String
+    var token: String?
+    var userId: String?
+    var id: String { url.lowercased() }
+}
+
 @MainActor
 final class Emby: ObservableObject {
     private let d = UserDefaults.standard
@@ -101,7 +112,67 @@ final class Emby: ObservableObject {
     @Published var playing: PlayRequest?
     @Published var played: [String: Bool] = [:]
     @Published var faved: [String: Bool] = [:]
+    @Published var servers: [SavedServer] = []
+    /// Resume positions (seconds) saved during this session; overrides what the server sent with the item.
+    @Published var positions: [String: Double] = [:]
     var loggedIn: Bool { !token.isEmpty }
+
+    private func saveServers() {
+        if let data = try? JSONEncoder().encode(servers) { d.set(data, forKey: "servers") }
+    }
+
+    private func upsert(_ e: SavedServer) {
+        if let i = servers.firstIndex(where: { $0.id == e.id }) { servers[i] = e } else { servers.append(e) }
+        saveServers()
+    }
+
+    func removeServer(_ e: SavedServer) {
+        servers.removeAll { $0.id == e.id }
+        saveServers()
+    }
+
+    static func normalize(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if !s.lowercased().hasPrefix("http") { s = "http://" + s }
+        while s.hasSuffix("/") { s.removeLast() }
+        return s
+    }
+
+    /// Signs in with a remembered token. Returns false if the token no longer works.
+    func resume(_ e: SavedServer) async -> Bool {
+        guard let t = e.token, let u = e.userId,
+              let url = URL(string: "\(e.url)/Users/\(u)") else { return false }
+        var r = URLRequest(url: url)
+        r.setValue(t, forHTTPHeaderField: "X-Emby-Token")
+        r.timeoutInterval = 10
+        guard let (_, resp) = try? await URLSession.shared.data(for: r),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            var x = e; x.token = nil; x.userId = nil; upsert(x)
+            return false
+        }
+        resetSession()
+        server = e.url; token = t; userId = u
+        d.set(server, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
+        return true
+    }
+
+    private func serverName(_ s: String) async -> String? {
+        guard let u = URL(string: s + "/System/Info/Public"),
+              let (data, _) = try? await URLSession.shared.data(from: u),
+              let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return j["ServerName"] as? String
+    }
+
+    private func resetSession() {
+        playing = nil; libs = []; played = [:]; faved = [:]
+    }
+
+    /// Back to the server list, staying signed in on this server.
+    func switchServer() {
+        resetSession()
+        token = ""; userId = ""
+        d.removeObject(forKey: "token"); d.removeObject(forKey: "uid")
+    }
 
     let deviceId: String = {
         if let x = UserDefaults.standard.string(forKey: "did") { return x }
@@ -114,16 +185,21 @@ final class Emby: ObservableObject {
         server = d.string(forKey: "server") ?? ""
         token = d.string(forKey: "token") ?? ""
         userId = d.string(forKey: "uid") ?? ""
+        if let data = d.data(forKey: "servers"),
+           let list = try? JSONDecoder().decode([SavedServer].self, from: data) { servers = list }
+        // Remember the server from before saved servers existed.
+        if servers.isEmpty, !server.isEmpty, !token.isEmpty {
+            servers = [SavedServer(url: server, name: server, user: "", token: token, userId: userId)]
+            saveServers()
+        }
     }
 
-    private var authHeader: String {
+    var authHeader: String {
         "MediaBrowser Client=\"EmbyFlix\", Device=\"Mac\", DeviceId=\"\(deviceId)\", Version=\"1.0\""
     }
 
     func login(server raw: String, user: String, pw: String) async throws {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-        if !s.hasPrefix("http") { s = "http://" + s }
-        while s.hasSuffix("/") { s.removeLast() }
+        let s = Self.normalize(raw)
         var r = URLRequest(url: URL(string: s + "/Users/AuthenticateByName")!)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -134,12 +210,19 @@ final class Emby: ObservableObject {
               let t = j["AccessToken"] as? String,
               let u = (j["User"] as? [String: Any])?["Id"] as? String
         else { throw URLError(.userAuthenticationRequired) }
+        resetSession()
         server = s; token = t; userId = u
         d.set(s, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
+        let name = await serverName(s) ?? servers.first { $0.id == s.lowercased() }?.name ?? s
+        upsert(SavedServer(url: s, name: name, user: user, token: t, userId: u))
     }
 
+    /// Signs out of this server: forgets its token but keeps it (and the username) in the list.
     func logout() {
-        playing = nil; libs = []; played = [:]; faved = [:]
+        if let i = servers.firstIndex(where: { $0.id == server.lowercased() }) {
+            servers[i].token = nil; servers[i].userId = nil; saveServers()
+        }
+        resetSession()
         token = ""; userId = ""
         d.removeObject(forKey: "token"); d.removeObject(forKey: "uid")
     }
@@ -236,6 +319,54 @@ final class Emby: ObservableObject {
     // MARK: Watched / favorites / play
 
     func isPlayed(_ it: Item) -> Bool { played[it.id] ?? it.UserData?.Played ?? false }
+    /// Where to resume an item from, in seconds (0 = start). Ignores the first 30 s and finished items.
+    func resumeAt(_ it: Item) -> Double {
+        if isPlayed(it) { return 0 }
+        let t = positions[it.id] ?? Double(it.UserData?.PlaybackPositionTicks ?? 0) / 10_000_000
+        return t > 30 ? t : 0
+    }
+
+    /// Next episode to watch for a series (in progress or first unwatched), as the server sees it.
+    func nextUp(_ seriesId: String) async -> Item? {
+        let r: ItemList? = try? await get("/Shows/NextUp", ["SeriesId": seriesId, "UserId": userId, "Fields": "Overview", "Limit": "1"])
+        return r?.Items.first
+    }
+
+    // MARK: Playback progress (lets the server remember where you stopped)
+
+    private func postJSON(_ path: String, _ body: [String: Any]) async {
+        guard let url = URL(string: server + path) else { return }
+        var r = URLRequest(url: url)
+        r.httpMethod = "POST"
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        r.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        r.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        _ = try? await URLSession.shared.data(for: r)
+    }
+
+    private func progressBody(_ itemId: String, _ sourceId: String?, _ sec: Double, paused: Bool = false) -> [String: Any] {
+        var b: [String: Any] = ["ItemId": itemId, "PositionTicks": Int64(max(0, sec) * 10_000_000),
+                                "IsPaused": paused, "CanSeek": true]
+        if let sourceId { b["MediaSourceId"] = sourceId }
+        return b
+    }
+
+    func reportStart(_ itemId: String, _ sourceId: String?, _ sec: Double) async {
+        await postJSON("/Sessions/Playing", progressBody(itemId, sourceId, sec))
+    }
+
+    func reportProgress(_ itemId: String, _ sourceId: String?, _ sec: Double, paused: Bool) async {
+        await postJSON("/Sessions/Playing/Progress", progressBody(itemId, sourceId, sec, paused: paused))
+    }
+
+    func reportStopped(_ itemId: String, _ sourceId: String?, _ sec: Double, duration: Double) async {
+        let finished = duration > 0 && sec / duration > 0.9
+        positions[itemId] = finished ? 0 : sec
+        if finished { played[itemId] = true }
+        await postJSON("/Sessions/Playing/Stopped", progressBody(itemId, sourceId, sec))
+    }
+
     func isFav(_ it: Item) -> Bool { faved[it.id] ?? it.UserData?.IsFavorite ?? false }
 
     private func send(_ method: String, _ path: String) async {
@@ -256,10 +387,13 @@ final class Emby: ObservableObject {
     func play(_ it: Item) async {
         if it.isSeries {
             let eps = await episodes(it.id)
-            if let e = eps.first(where: { !isPlayed($0) }) ?? eps.first { playing = PlayRequest(item: e) }
+            let next = await nextUp(it.id)
+            if let e = next ?? eps.first(where: { !isPlayed($0) }) ?? eps.first {
+                playing = PlayRequest(item: e, start: resumeAt(e))
+            }
         } else if it.isBox {
             if let f = await children(it.id).first { playing = PlayRequest(item: f) }
-        } else { playing = PlayRequest(item: it) }
+        } else { playing = PlayRequest(item: it, start: resumeAt(it)) }
     }
 
     func full(_ id: String) async -> Full? {

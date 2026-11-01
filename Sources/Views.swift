@@ -65,33 +65,123 @@ struct RootView: View {
 
 struct LoginView: View {
     @EnvironmentObject var emby: Emby
+    @State private var adding = false
     @State private var server = ""
     @State private var user = ""
     @State private var pw = ""
     @State private var error = ""
+    @State private var busy = false
+    @FocusState private var focus: Field?
+    enum Field { case server, user, pw }
+
+    var showForm: Bool { adding || emby.servers.isEmpty }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 14) {
                 Text("EMBYFLIX").font(.system(size: 44, weight: .black)).foregroundStyle(.tint)
-                Text("Sign In").font(.title.bold()).padding(.bottom, 6)
-                TextField("Server (e.g. 192.168.1.10:8096)", text: $server)
-                TextField("Username", text: $user)
-                SecureField("Password", text: $pw).onSubmit(go)
-                Button(action: go) {
-                    Text("Sign In").bold().frame(maxWidth: .infinity).padding(8)
-                }.buttonStyle(.borderedProminent)
-                if !error.isEmpty { Text(error).foregroundColor(.orange).font(.caption) }
+                if showForm { form } else { serverList }
+                if !error.isEmpty { Text(error).foregroundColor(.orange).font(.caption).multilineTextAlignment(.center) }
             }
-            .textFieldStyle(.roundedBorder).controlSize(.large)
-            .frame(width: 340).padding(36)
+            .frame(width: showForm ? 340 : 520).padding(36)
             .background(Color.black.opacity(0.75)).cornerRadius(8)
         }
     }
-    func go() {
+
+    var serverList: some View {
+        VStack(spacing: 14) {
+            Text("Select Server").font(.title.bold()).padding(.bottom, 6)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], spacing: 16) {
+                ForEach(emby.servers) { s in serverCard(s) }
+                Button { startAdd() } label: {
+                    VStack(spacing: 10) {
+                        Image(systemName: "plus").font(.system(size: 34, weight: .light))
+                            .frame(width: 150, height: 100)
+                            .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [6])))
+                        Text("Add Server").font(.headline)
+                        Text(" ").font(.caption)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+            if busy { ProgressView().controlSize(.small) }
+        }
+    }
+
+    func serverCard(_ s: SavedServer) -> some View {
+        Button { open(s) } label: {
+            VStack(spacing: 10) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "server.rack").font(.system(size: 38))
+                        .frame(width: 150, height: 100)
+                        .background(Color.white.opacity(0.08)).cornerRadius(10)
+                    if s.token != nil {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).padding(6)
+                            .help("Signed in")
+                    }
+                }
+                Text(s.name).font(.headline).lineLimit(1)
+                Text(s.user.isEmpty ? s.url : "\(s.user) · \(s.url)")
+                    .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            .frame(width: 150).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(busy)
+        .contextMenu {
+            Button("Edit / Sign In Again") { edit(s) }
+            Button("Remove Server", role: .destructive) { emby.removeServer(s) }
+        }
+    }
+
+    var form: some View {
+        VStack(spacing: 14) {
+            HStack {
+                if !emby.servers.isEmpty {
+                    Button { adding = false; error = "" } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(.plain).help("Back to servers")
+                }
+                Spacer()
+                Text(emby.servers.isEmpty ? "Sign In" : "Add Server").font(.title.bold())
+                Spacer()
+                if !emby.servers.isEmpty { Image(systemName: "chevron.left").hidden() }
+            }.padding(.bottom, 6)
+            TextField("Server (e.g. 192.168.1.10:8096)", text: $server).focused($focus, equals: .server)
+                .onSubmit { focus = .user }
+            TextField("Username", text: $user).focused($focus, equals: .user).onSubmit { focus = .pw }
+            SecureField("Password", text: $pw).focused($focus, equals: .pw).onSubmit(go)
+            Button(action: go) {
+                HStack {
+                    if busy { ProgressView().controlSize(.small) }
+                    Text("Sign In").bold()
+                }.frame(maxWidth: .infinity).padding(8)
+            }.buttonStyle(.borderedProminent).disabled(busy || server.isEmpty || user.isEmpty)
+        }
+        .textFieldStyle(.roundedBorder).controlSize(.large)
+        .onAppear { focus = server.isEmpty ? .server : .pw }
+    }
+
+    func startAdd() { server = ""; user = ""; pw = ""; error = ""; adding = true }
+
+    func edit(_ s: SavedServer) { server = s.url; user = s.user; pw = ""; error = ""; adding = true; focus = .pw }
+
+    func open(_ s: SavedServer) {
+        error = ""
+        guard s.token != nil else { edit(s); return }
+        busy = true
         Task {
-            do { try await emby.login(server: server, user: user, pw: pw) }
+            let ok = await emby.resume(s)
+            busy = false
+            if !ok { edit(s); error = "Session expired. Enter your password to sign in again." }
+        }
+    }
+
+    func go() {
+        guard !busy else { return }
+        busy = true; error = ""
+        Task {
+            do { try await emby.login(server: server, user: user, pw: pw); pw = ""; adding = false }
             catch { self.error = "Couldn't sign in. Check server address and credentials." }
+            busy = false
         }
     }
 }
@@ -104,7 +194,6 @@ struct HomeView: View {
     @State private var path = NavigationPath()
     @State private var query = ""
     @State private var showSettings = false
-    @State private var showTheme = false
     @State private var reloadToken = 0
 
     func icon(_ lib: LibPref) -> String {
@@ -135,9 +224,10 @@ struct HomeView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 12) {
-                    Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Customize libraries")
-                    Button { showTheme = true } label: { Image(systemName: "paintpalette") }.help("Appearance")
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
                     Spacer()
+                    Button("Switch Server") { emby.switchServer() }
                     Button("Sign Out") { emby.logout() }
                 }.buttonStyle(.plain).font(.caption).padding(10)
             }
@@ -155,8 +245,7 @@ struct HomeView: View {
         }
         .task { await emby.loadLibs() }
         .onChange(of: sel) { path = NavigationPath(); query = "" }
-        .sheet(isPresented: $showSettings) { LibrarySettings { reloadToken += 1 } }
-        .sheet(isPresented: $showTheme) { AppearanceSheet() }
+        .sheet(isPresented: $showSettings) { SettingsView { reloadToken += 1 } }
     }
 }
 
@@ -209,39 +298,6 @@ struct SearchView: View {
             results = await emby.search(query)
             busy = false
         }
-    }
-}
-
-struct AppearanceSheet: View {
-    @Environment(\.dismiss) var dismiss
-    @AppStorage("accent") private var accent = "red"
-    @AppStorage("bg") private var bg = "black"
-
-    func swatches(_ list: [(String, Color)], selection: Binding<String>) -> some View {
-        HStack(spacing: 14) {
-            ForEach(list, id: \.0) { name, color in
-                Button { selection.wrappedValue = name } label: {
-                    Circle().fill(color).frame(width: 34, height: 34)
-                        .overlay(Circle().stroke(Color.white, lineWidth: selection.wrappedValue == name ? 3 : 0))
-                        .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
-                }.buttonStyle(.plain).help(name.capitalized)
-            }
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Appearance").font(.title2.bold())
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            Text("Accent color").font(.headline)
-            swatches(Theme.accents, selection: $accent)
-            Text("Background").font(.headline)
-            swatches(Theme.backgrounds, selection: $bg)
-        }
-        .padding(24).frame(width: 440)
     }
 }
 
@@ -365,12 +421,7 @@ struct PosterCard: View {
                 }
                 .frame(width: 150, height: 225).clipped()
                 .opacity(played ? 0.6 : 1)
-                if played {
-                    ZStack {
-                        Circle().fill(.tint)
-                        Image(systemName: "checkmark").font(.caption.bold()).foregroundColor(.white)
-                    }.frame(width: 22, height: 22).padding(6).shadow(radius: 3)
-                }
+                WatchBadge(item: item, played: played).padding(6)
             }
             .overlay(alignment: .bottom) {
                 if let pct = item.UserData?.PlayedPercentage, pct > 0, pct < 100, !played {
@@ -385,6 +436,65 @@ struct PosterCard: View {
             .help(item.Name)
         }.buttonStyle(.plain)
     }
+}
+
+/// One row in the library list view: poster, title, year, overview and watched badge.
+struct ListRow: View {
+    @EnvironmentObject var emby: Emby
+    let item: Item
+    @State private var hover = false
+    var body: some View {
+        let played = emby.isPlayed(item)
+        NavigationLink(value: item) {
+            HStack(alignment: .top, spacing: 16) {
+                AsyncImage(url: emby.image(item.posterId, width: 160)) { p in
+                    p.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: { Color(white: 0.15) }
+                .frame(width: 60, height: 90).clipped().cornerRadius(4)
+                .opacity(played ? 0.6 : 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.Name).font(.headline).lineLimit(1)
+                    if let y = item.ProductionYear { Text(String(y)).font(.subheadline).foregroundColor(.secondary) }
+                    Text(item.Overview ?? "").font(.caption).foregroundColor(.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 12)
+                WatchBadge(item: item, played: played)
+            }
+            .padding(8)
+            .background(Color.white.opacity(hover ? 0.08 : 0.03)).cornerRadius(6)
+            .contentShape(Rectangle())
+            .onHover { hover = $0 }
+        }.buttonStyle(.plain)
+    }
+}
+
+/// Top-right poster badge: green check when watched, unwatched-episode count for series.
+struct WatchBadge: View {
+    let item: Item
+    let played: Bool
+    static let green = Color(red: 0.36, green: 0.66, blue: 0.33)
+
+    var body: some View {
+        if played {
+            Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundColor(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Self.green))
+                .shadow(color: .black.opacity(0.5), radius: 3)
+                .help("Watched")
+        } else if item.isSeries, let n = item.UserData?.UnplayedItemCount, n > 0 {
+            Text(n > 99 ? "99+" : "\(n)").font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 24)
+                .background(Capsule().fill(Self.green))
+                .shadow(color: .black.opacity(0.5), radius: 3)
+                .help("\(n) unwatched episode\(n == 1 ? "" : "s")")
+        }
+    }
+}
+
+/// 1:02:03 / 12:34 style time.
+func timeString(_ t: Double) -> String {
+    let s = Int(max(0, t)), h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+    return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
 }
 
 // MARK: - Library page (header, tabs, sort, filter; choices are remembered per library)
@@ -404,6 +514,7 @@ struct LibraryView: View {
     @State private var genre: String
     @State private var genres: [String] = []
     @State private var letter = ""
+    @State private var layout: String
 
     init(lib: LibPref) {
         self.lib = lib
@@ -412,6 +523,8 @@ struct LibraryView: View {
         _desc = State(initialValue: d["desc"] as? Bool ?? false)
         _watch = State(initialValue: d["watch"] as? String ?? "all")
         _genre = State(initialValue: d["genre"] as? String ?? "")
+        _layout = State(initialValue: d["layout"] as? String
+                        ?? UserDefaults.standard.string(forKey: "defaultLibraryLayout") ?? "grid")
     }
 
     var key: String { "\(tab)|\(sort)|\(desc)|\(watch)|\(genre)|\(letter)" }
@@ -427,7 +540,7 @@ struct LibraryView: View {
     }
 
     func save() {
-        let d: [String: Any] = ["sort": sort, "desc": desc, "watch": watch, "genre": genre]
+        let d: [String: Any] = ["sort": sort, "desc": desc, "watch": watch, "genre": genre, "layout": layout]
         UserDefaults.standard.set(d, forKey: "lf-" + lib.id)
     }
 
@@ -443,7 +556,7 @@ struct LibraryView: View {
         .task(id: key) { await load(reset: true) }
         .task { genres = await emby.genres(lib) }
         .onChange(of: sort) { desc = (sort != "name") }
-        .onChange(of: "\(sort)|\(desc)|\(watch)|\(genre)") { save() }
+        .onChange(of: "\(sort)|\(desc)|\(watch)|\(genre)|\(layout)") { save() }
     }
 
     var alphaBar: some View {
@@ -520,6 +633,7 @@ struct LibraryView: View {
             if !genre.isEmpty {
                 Button { genre = "" } label: { Label(genre, systemImage: "xmark").pill(active: true) }.buttonStyle(.plain)
             }
+            layoutToggle
             Menu {
                 Button("Refresh") { Task { await load(reset: true) } }
             } label: { Image(systemName: "ellipsis").pill() }
@@ -529,16 +643,41 @@ struct LibraryView: View {
 
     var grid: some View {
         VStack(spacing: 20) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
-                ForEach(items) { it in
-                    PosterCard(item: it).onAppear {
-                        if it.id == items.last?.id { Task { await load(reset: false) } }
+            if layout == "list" {
+                LazyVStack(spacing: 6) {
+                    ForEach(items) { it in
+                        ListRow(item: it).onAppear {
+                            if it.id == items.last?.id { Task { await load(reset: false) } }
+                        }
+                    }
+                }
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+                    ForEach(items) { it in
+                        PosterCard(item: it).onAppear {
+                            if it.id == items.last?.id { Task { await load(reset: false) } }
+                        }
                     }
                 }
             }
             if loading { ProgressView() }
             else if items.isEmpty { Text("Nothing here.").foregroundColor(.secondary).padding(40) }
         }
+    }
+
+    var layoutToggle: some View {
+        HStack(spacing: 0) {
+            ForEach([("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
+                Button { layout = m.0 } label: {
+                    Image(systemName: m.1).font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 26)
+                        .background(layout == m.0 ? Color.white.opacity(0.28) : Color.clear)
+                        .foregroundColor(layout == m.0 ? .white : .secondary)
+                        .clipShape(Capsule())
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).help(m.0 == "grid" ? "Grid view" : "List view")
+            }
+        }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
     }
 
     var genreGrid: some View {
@@ -575,39 +714,6 @@ struct LibraryView: View {
     }
 }
 
-struct LibrarySettings: View {
-    @EnvironmentObject var emby: Emby
-    @Environment(\.dismiss) var dismiss
-    var onDone: () -> Void
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Customize Libraries").font(.title2.bold())
-                Spacer()
-                Button("Done") { emby.saveLibs(); onDone(); dismiss() }.keyboardShortcut(.defaultAction)
-            }.padding()
-            List {
-                ForEach($emby.libs) { $lib in
-                    HStack(spacing: 12) {
-                        Toggle("Show", isOn: $lib.visible)
-                        Toggle("Home row", isOn: $lib.onHome).disabled(!lib.visible)
-                        TextField(lib.name, text: $lib.title)
-                        Picker("", selection: $lib.style) {
-                            Text("Latest").tag("latest")
-                            Text("Top Rated").tag("top")
-                            Text("Random").tag("random")
-                            Text("A–Z").tag("az")
-                        }.labelsHidden().frame(width: 110)
-                    }.padding(.vertical, 4)
-                }.onMove { emby.libs.move(fromOffsets: $0, toOffset: $1) }
-            }
-            Text("Drag rows to reorder. “Show” puts the library in the sidebar; “Home row” adds a row on the home screen.")
-                .font(.caption).foregroundColor(.secondary).padding(10)
-        }
-        .frame(width: 680, height: 460)
-    }
-}
-
 // MARK: - Detail / movie info
 
 struct CastTile: View {
@@ -636,12 +742,14 @@ struct DetailView: View {
     @State private var seasonItems: [Item] = []
     @State private var epLangs: [(code: String, name: String)] = []
     @AppStorage("episodeSubLang") private var epSubLang = ""
+    @AppStorage("episodeLayout") private var epLayout = "list"
     @State private var similar: [Item] = []
     @State private var srcIdx = 0
     @State private var audioIdx = -1
     @State private var subIdx = -1
-    @State private var quality = 0
+    @State private var quality = UserDefaults.standard.integer(forKey: "defaultQuality")
     @State private var season: Int? = nil
+    @State private var nextEp: Item? = nil
 
     var sources: [MSource] { full?.MediaSources ?? [] }
     var src: MSource? { sources.indices.contains(srcIdx) ? sources[srcIdx] : nil }
@@ -652,13 +760,27 @@ struct DetailView: View {
     }
     var simple: Bool { item.isSeries || item.isBox }
 
-    func playNow() {
+    /// `from` nil means resume where it was left off; 0 starts over.
+    func playNow(from: Double? = nil) {
+        if item.isSeries, let ep = nextEp { playEpisode(ep, from: from); return }
         if simple { Task { await emby.play(item) }; return }
         let audioChanged = audioIdx >= 0 && audioIdx != defaultAudio
         emby.playing = PlayRequest(item: item, sourceId: src?.Id,
                                    audio: audioChanged ? audioIdx : nil,
                                    sub: subIdx >= 0 ? subIdx : nil,
-                                   maxBitrate: quality > 0 ? quality : nil)
+                                   maxBitrate: quality > 0 ? quality : nil,
+                                   start: from ?? emby.resumeAt(item))
+    }
+
+    /// The item the big Play button acts on (next-up episode for a series).
+    var playTarget: Item? { item.isSeries ? nextEp : (simple ? nil : item) }
+
+    var playLabel: String {
+        let r = playTarget.map { emby.resumeAt($0) } ?? 0
+        let verb = r > 0 ? "Resume" : "Play"
+        if item.isSeries, let ep = nextEp { return "\(verb) S\(ep.ParentIndexNumber ?? 0):E\(ep.IndexNumber ?? 0)" }
+        if r > 0 { return "Resume from \(timeString(r))" }
+        return verb
     }
 
     var body: some View {
@@ -686,6 +808,7 @@ struct DetailView: View {
                 async let eps = emby.episodes(item.id)
                 async let ss = emby.seasons(item.id)
                 kids = await eps; seasonItems = await ss
+                nextEp = await emby.nextUp(item.id) ?? kids.first { !emby.isPlayed($0) } ?? kids.first
                 if let first = kids.first { epLangs = Self.subLangs(await emby.full(first.id)) }
             }
             else if item.isBox { kids = await emby.children(item.id) }
@@ -782,10 +905,14 @@ struct DetailView: View {
         let played = emby.isPlayed(item)
         return HStack(spacing: 10) {
             Button { playNow() } label: {
-                Label("Play", systemImage: "play.fill").bold()
+                Label(playLabel, systemImage: "play.fill").bold()
                     .padding(.horizontal, 22).padding(.vertical, 9)
                     .background(.white).foregroundColor(.black).clipShape(Capsule())
             }.buttonStyle(.plain)
+            if let t = playTarget, emby.resumeAt(t) > 0 {
+                Button { playNow(from: 0) } label: { Label("Start Over", systemImage: "arrow.counterclockwise").pill() }
+                    .buttonStyle(.plain)
+            }
             if let t = full?.RemoteTrailers?.first?.Url, let u = URL(string: t) {
                 Button { NSWorkspace.shared.open(u) } label: { Label("Trailer", systemImage: "film").pill() }.buttonStyle(.plain)
             }
@@ -818,8 +945,12 @@ struct DetailView: View {
     }
 
     /// Plays an episode with the subtitle language chosen for episodes (text formats like SRT preferred).
-    func playEpisode(_ ep: Item) {
-        if epSubLang.isEmpty { emby.playing = PlayRequest(item: ep); return }
+    /// Plays an episode; `from` nil means resume where it was left off.
+    func playEpisode(_ ep: Item, from: Double? = nil) {
+        let q = UserDefaults.standard.integer(forKey: "defaultQuality")
+        let maxBitrate: Int? = q > 0 ? q : nil
+        let start: Double = from ?? emby.resumeAt(ep)
+        if epSubLang.isEmpty { emby.playing = PlayRequest(item: ep, maxBitrate: maxBitrate, start: start); return }
         Task {
             let f = await emby.full(ep.id)
             let src = f?.MediaSources?.first
@@ -827,7 +958,7 @@ struct DetailView: View {
                 $0.`Type` == "Subtitle" && Self.langName($0).lowercased() == epSubLang }
             let text = ["srt", "subrip", "vtt", "ass", "ssa"]
             let pick = subs.first { text.contains(($0.Codec ?? "").lowercased()) } ?? subs.first
-            emby.playing = PlayRequest(item: ep, sourceId: src?.Id, sub: pick?.Index)
+            emby.playing = PlayRequest(item: ep, sourceId: src?.Id, sub: pick?.Index, maxBitrate: maxBitrate, start: start)
         }
     }
 
@@ -887,6 +1018,7 @@ struct DetailView: View {
         return HStack(spacing: 16) {
             Text(heading).font(.title3.bold())
             Spacer()
+            episodeLayoutToggle
             if !epLangs.isEmpty {
                 Text("Subtitles").foregroundColor(.secondary)
                 Picker("", selection: $epSubLang) {
@@ -912,11 +1044,12 @@ struct DetailView: View {
                     Text(ep.Overview ?? "").lineLimit(2).font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
-                if played { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).font(.title3) }
+                WatchBadge(item: ep, played: played)
             }.contentShape(Rectangle())
         }
         .buttonStyle(.plain).padding(.horizontal, 40)
         .contextMenu {
+            Button("Play from Beginning") { playEpisode(ep, from: 0) }
             Button(played ? "Mark as unwatched" : "Mark as watched") {
                 Task { await emby.setPlayed(ep.id, !played) }
             }
@@ -929,7 +1062,60 @@ struct DetailView: View {
         return VStack(alignment: .leading, spacing: 12) {
             if seasonNumbers.count > 1 { seasonRow }
             episodesHeader
-            ForEach(eps) { ep in episodeRow(ep) }
+            if epLayout == "grid" {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 18)], spacing: 22) {
+                    ForEach(eps) { ep in episodeTile(ep) }
+                }.padding(.horizontal, 40)
+            } else {
+                ForEach(eps) { ep in episodeRow(ep) }
+            }
+        }
+    }
+
+    var episodeLayoutToggle: some View {
+        HStack(spacing: 0) {
+            ForEach([("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
+                Button { epLayout = m.0 } label: {
+                    Image(systemName: m.1).font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 26)
+                        .background(epLayout == m.0 ? Color.white.opacity(0.28) : Color.clear)
+                        .foregroundColor(epLayout == m.0 ? .white : .secondary)
+                        .clipShape(Capsule())
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).help(m.0 == "grid" ? "Grid view" : "List view")
+            }
+        }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+    }
+
+    func episodeTile(_ ep: Item) -> some View {
+        let played: Bool = emby.isPlayed(ep)
+        let label: String = "\(ep.IndexNumber ?? 0). \(ep.Name)"
+        return Button { playEpisode(ep) } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: emby.image(ep.id, width: 520)) { img in
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: { Color(white: 0.15) }
+                    .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
+                    .clipped().cornerRadius(6)
+                    .opacity(played ? 0.6 : 1)
+                    WatchBadge(item: ep, played: played).padding(6)
+                }
+                .overlay(alignment: .bottom) {
+                    if let pct = ep.UserData?.PlayedPercentage, pct > 0, pct < 100, !played {
+                        ProgressView(value: pct / 100).padding(.horizontal, 8).padding(.bottom, 6)
+                    }
+                }
+                Text(label).font(.headline).lineLimit(1)
+                Text(ep.Overview ?? "").font(.caption).foregroundColor(.secondary).lineLimit(2)
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Play from Beginning") { playEpisode(ep, from: 0) }
+            Button(played ? "Mark as unwatched" : "Mark as watched") {
+                Task { await emby.setPlayed(ep.id, !played) }
+            }
         }
     }
 
@@ -1019,7 +1205,10 @@ final class PlayerModel: ObservableObject {
     @Published var sub: Int? = nil
     @Published var audio: Int? = nil
     @Published var quality = 0
-    @Published var speed: Float = 1
+    @Published var speed: Float = {
+        let v = UserDefaults.standard.double(forKey: "defaultSpeed")
+        return v > 0 ? Float(v) : 1
+    }()
     @Published var time: Double = 0
     @Published var duration: Double = 0
     @Published var playing = false
@@ -1030,6 +1219,9 @@ final class PlayerModel: ObservableObject {
     private var timeObs: Any?
     private var req: PlayRequest?
     private var pendingSeek: Double = 0
+    private weak var emby: Emby?
+    private var lastReport: Double = 0
+    private var reportedStart = false
 
     var audioStreams: [MStream] { streams.filter { $0.`Type` == "Audio" } }
     var subStreams: [MStream] { streams.filter { $0.`Type` == "Subtitle" } }
@@ -1043,6 +1235,8 @@ final class PlayerModel: ObservableObject {
     func start(_ emby: Emby, _ req: PlayRequest, direct: Bool = true) async {
         stop()
         error = ""; cues = []
+        self.emby = emby
+        if pendingSeek == 0, let s = req.start, s > 0 { pendingSeek = s }
         self.req = req
         sub = req.sub; quality = req.maxBitrate ?? 0
         if streams.isEmpty, let f = await emby.full(req.item.id) {
@@ -1067,9 +1261,16 @@ final class PlayerModel: ObservableObject {
             }
             if i.status == .readyToPlay {
                 Task { @MainActor in
-                    guard let self, self.pendingSeek > 0 else { return }
-                    let t = self.pendingSeek; self.pendingSeek = 0
-                    await self.player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+                    guard let self else { return }
+                    if self.pendingSeek > 0 {
+                        let t = self.pendingSeek; self.pendingSeek = 0
+                        self.time = t
+                        await self.player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+                    }
+                    if !self.reportedStart, let r = self.req {
+                        self.reportedStart = true
+                        await self.emby?.reportStart(r.item.id, r.sourceId, self.now)
+                    }
                 }
             }
         }
@@ -1127,8 +1328,20 @@ final class PlayerModel: ObservableObject {
         if t.isFinite { time = t }
         if let d = player?.currentItem?.duration.seconds, d.isFinite, d > 0 { duration = d }
         let isPlaying = (player?.rate ?? 0) > 0
-        if isPlaying != playing { playing = isPlaying }
+        if isPlaying != playing {
+            playing = isPlaying
+            sendProgress(t, force: true)
+        }
+        sendProgress(t)
         updateCaption(t)
+    }
+
+    /// Tells the server the current position every 10 s (and on pause/play), so it can resume later.
+    private func sendProgress(_ t: Double, force: Bool = false) {
+        guard reportedStart, let r = req, t.isFinite, force || abs(t - lastReport) >= 10 else { return }
+        lastReport = t
+        let paused = !playing
+        Task { await emby?.reportProgress(r.item.id, r.sourceId, t, paused: paused) }
     }
 
     func togglePlay() {
@@ -1159,6 +1372,13 @@ final class PlayerModel: ObservableObject {
     }
 
     func stop() {
+        if let p = player, let r = req, reportedStart {
+            let t = p.currentTime().seconds
+            let d = p.currentItem?.duration.seconds ?? 0
+            let e = emby
+            Task { await e?.reportStopped(r.item.id, r.sourceId, t.isFinite ? t : 0, duration: d.isFinite ? d : 0) }
+        }
+        reportedStart = false; lastReport = 0
         if let o = timeObs { player?.removeTimeObserver(o) }
         timeObs = nil
         player?.pause(); player = nil; obs = nil; caption = ""
@@ -1185,6 +1405,10 @@ struct PlayerView: View {
     @AppStorage("subShadowStyle") private var subShadow = "drop"
     @AppStorage("subBg") private var subBg = "none"
     @AppStorage("subBottom") private var subBottom = 10.0
+    @AppStorage("skipSeconds") private var skipSecs = 10
+    @AppStorage("autoNext") private var autoNext = true
+    @AppStorage("clickToPause") private var clickToPause = true
+    @State private var backHover = false
 
     static let sizes: [(String, String, Double)] = [("smaller", "Smaller", 0.032), ("small", "Small", 0.038),
         ("normal", "Normal", 0.045), ("large", "Large", 0.055), ("larger", "Larger", 0.066)]
@@ -1219,7 +1443,9 @@ struct PlayerView: View {
             }
             if model.watchedEnough { await emby.setPlayed(item.id, true) }
             model.stop()
-            emby.playing = PlayRequest(item: ep, sourceId: src?.Id, sub: pick)
+            let q = UserDefaults.standard.integer(forKey: "defaultQuality")
+            emby.playing = PlayRequest(item: ep, sourceId: src?.Id, sub: pick, maxBitrate: q > 0 ? q : nil,
+                                       start: emby.resumeAt(ep))
         }
     }
 
@@ -1275,14 +1501,18 @@ struct PlayerView: View {
                 panelLayer
             }
             .contentShape(Rectangle())
-            .onTapGesture { if panel != nil { panel = nil } else { model.togglePlay(); poke() } }
+            .onTapGesture {
+                if panel != nil { panel = nil }
+                else if clickToPause { model.togglePlay(); poke() }
+                else { withAnimation { showUI.toggle() } }
+            }
         }
         .foregroundColor(.white)
         .onContinuousHover { _ in poke() }
         .focusable().focused($focused).focusEffectDisabled()
         .onKeyPress(.space) { model.togglePlay(); poke(); return .handled }
-        .onKeyPress(.leftArrow) { model.skip(-10); poke(); return .handled }
-        .onKeyPress(.rightArrow) { model.skip(10); poke(); return .handled }
+        .onKeyPress(.leftArrow) { model.skip(-Double(skipSecs)); poke(); return .handled }
+        .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.escape) { if panel != nil { panel = nil } else { close() }; return .handled }
         .task {
             focused = true
@@ -1292,7 +1522,7 @@ struct PlayerView: View {
         .task { await model.start(emby, req) }
         .onDisappear { model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
-            if let n = nextEp { play(n) } else { close() }
+            if autoNext, let n = nextEp { play(n) } else { close() }
         }
     }
 
@@ -1325,8 +1555,21 @@ struct PlayerView: View {
 
     var topBar: some View {
         HStack(spacing: 16) {
-            Button { close() } label: { Image(systemName: "chevron.left").font(.system(size: 22, weight: .semibold)) }
-                .buttonStyle(.plain).help("Back")
+            Button { close() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.left").font(.system(size: 18, weight: .bold))
+                    Text("Back").font(.system(size: 16, weight: .semibold))
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Capsule().fill(Color.black.opacity(backHover ? 0.85 : 0.6)))
+                .overlay(Capsule().stroke(Color.white.opacity(backHover ? 0.7 : 0.3), lineWidth: 1))
+                .scaleEffect(backHover ? 1.05 : 1)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .onHover { backHover = $0 }
+            .animation(.easeOut(duration: 0.12), value: backHover)
+            .help("Back (Esc)")
             AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
             } placeholder: { EmptyView() }
@@ -1386,10 +1629,10 @@ struct PlayerView: View {
             HStack(spacing: 30) {
                 iconButton("backward.end.fill", size: 18) { if let p = prevEp { play(p) } else { model.seek(to: 0) } }
                     .help("Previous")
-                iconButton("gobackward.10", size: 22) { model.skip(-10) }.help("Back 10 seconds")
+                iconButton("gobackward.\(skipSecs)", size: 22) { model.skip(-Double(skipSecs)) }.help("Back \(skipSecs) seconds")
                 iconButton(model.playing ? "pause.fill" : "play.fill", size: 26) { model.togglePlay() }
                     .help(model.playing ? "Pause" : "Play")
-                iconButton("goforward.10", size: 22) { model.skip(10) }.help("Forward 10 seconds")
+                iconButton("goforward.\(skipSecs)", size: 22) { model.skip(Double(skipSecs)) }.help("Forward \(skipSecs) seconds")
                 iconButton("forward.end.fill", size: 18) { if let n = nextEp { play(n) } }
                     .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
                 Spacer()
@@ -1609,10 +1852,15 @@ struct SubShadow: ViewModifier {
 
 /// AppKit video surface with no built-in controls; the SwiftUI overlay draws the UI.
 /// (SwiftUI's VideoPlayer crashes on load on this macOS version.)
+/// AVPlayerView swallows mouse clicks; let them pass through to the SwiftUI layer (click = play/pause).
+final class PassthroughPlayerView: AVPlayerView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 struct AVPlayerViewRep: NSViewRepresentable {
     let player: AVPlayer
     func makeNSView(context: Context) -> AVPlayerView {
-        let v = AVPlayerView()
+        let v = PassthroughPlayerView()
         v.player = player
         v.controlsStyle = .none
         v.allowsPictureInPicturePlayback = false
