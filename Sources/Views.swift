@@ -831,68 +831,105 @@ struct DetailView: View {
         }
     }
 
-    var episodesList: some View {
+    var seasonNumbers: [Int] {
+        let set = Set(kids.map { $0.ParentIndexNumber ?? 0 })
+        return set.sorted { (a: Int, b: Int) -> Bool in
+            if a == 0 { return false }
+            if b == 0 { return true }
+            return a < b
+        }
+    }
+
+    var currentSeason: Int {
+        if let season { return season }
+        if let firstUnwatched = kids.first(where: { !emby.isPlayed($0) })?.ParentIndexNumber { return firstUnwatched }
+        return seasonNumbers.first ?? 0
+    }
+
+    func seasonTitle(_ n: Int) -> String {
+        if n == 0 { return "Specials" }
+        return seasonItems.first { ($0.IndexNumber ?? 0) == n }?.Name ?? "Season \(n)"
+    }
+
+    func seasonPoster(_ n: Int) -> some View {
+        let sItem: Item? = seasonItems.first { ($0.IndexNumber ?? 0) == n }
+        let title: String = seasonTitle(n)
+        let selected: Bool = n == currentSeason
+        return Button { season = n } label: {
+            VStack(spacing: 8) {
+                AsyncImage(url: emby.image(sItem?.Id ?? item.Id, width: 400)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    ZStack { Color(white: 0.15); Text(title) }
+                }
+                .frame(width: 170, height: 255).clipped().cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: selected ? 3 : 0))
+                .shadow(radius: 6)
+                Text(title).font(.body).foregroundColor(selected ? .primary : .secondary)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    var seasonRow: some View {
         VStack(alignment: .leading, spacing: 12) {
-            let seasons = Array(Set(kids.map { $0.ParentIndexNumber ?? 0 })).sorted { a, b in
-                a == 0 ? false : (b == 0 ? true : a < b) }
-            let current = season ?? kids.first(where: { !emby.isPlayed($0) })?.ParentIndexNumber ?? seasons.first ?? 0
-            if seasons.count > 1 {
-                Text("Seasons").font(.title3.bold()).padding(.horizontal, 40)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(alignment: .top, spacing: 18) {
-                        ForEach(seasons, id: \.self) { n in
-                            let sItem = seasonItems.first { ($0.IndexNumber ?? 0) == n }
-                            let title = n == 0 ? "Specials" : (sItem?.Name ?? "Season \(n)")
-                            Button { season = n } label: {
-                                VStack(spacing: 8) {
-                                    AsyncImage(url: emby.image(sItem?.Id ?? item.Id, width: 400)) {
-                                        $0.resizable().aspectRatio(contentMode: .fill)
-                                    } placeholder: { ZStack { Color(white: 0.15); Text(title) } }
-                                    .frame(width: 170, height: 255).clipped().cornerRadius(8)
-                                    .overlay(RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.white, lineWidth: n == current ? 3 : 0))
-                                    .shadow(radius: 6)
-                                    Text(title).font(.body).foregroundColor(n == current ? .primary : .secondary)
-                                }.contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                        }
-                    }.padding(.horizontal, 40).padding(.vertical, 4)
-                }
+            Text("Seasons").font(.title3.bold()).padding(.horizontal, 40)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 18) {
+                    ForEach(seasonNumbers, id: \.self) { n in seasonPoster(n) }
+                }.padding(.horizontal, 40).padding(.vertical, 4)
             }
-            HStack(spacing: 16) {
-                Text(seasons.count > 1 ? (current == 0 ? "Specials" : "Season \(current)") : "Episodes")
-                    .font(.title3.bold())
+        }
+    }
+
+    var episodesHeader: some View {
+        let multi: Bool = seasonNumbers.count > 1
+        let heading: String = multi ? seasonTitle(currentSeason) : "Episodes"
+        return HStack(spacing: 16) {
+            Text(heading).font(.title3.bold())
+            Spacer()
+            if !epLangs.isEmpty {
+                Text("Subtitles").foregroundColor(.secondary)
+                Picker("", selection: $epSubLang) {
+                    Text("Off").tag("")
+                    ForEach(epLangs, id: \.code) { l in Text(l.name).tag(l.code) }
+                }.labelsHidden().fixedSize()
+            }
+        }.padding(.horizontal, 40).padding(.top, 10)
+    }
+
+    func episodeRow(_ ep: Item) -> some View {
+        let played: Bool = emby.isPlayed(ep)
+        let label: String = "S\(ep.ParentIndexNumber ?? 0)·E\(ep.IndexNumber ?? 0)  \(ep.Name)"
+        return Button { playEpisode(ep) } label: {
+            HStack(spacing: 14) {
+                AsyncImage(url: emby.image(ep.id, width: 320)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: { Color(white: 0.15) }
+                .frame(width: 160, height: 90).clipped().cornerRadius(4)
+                .opacity(played ? 0.6 : 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(label).bold()
+                    Text(ep.Overview ?? "").lineLimit(2).font(.caption).foregroundColor(.secondary)
+                }
                 Spacer()
-                if !epLangs.isEmpty {
-                    Text("Subtitles").foregroundColor(.secondary)
-                    Picker("", selection: $epSubLang) {
-                        Text("Off").tag("")
-                        ForEach(epLangs, id: \.code) { Text($0.name).tag($0.code) }
-                    }.labelsHidden().fixedSize()
-                }
-            }.padding(.horizontal, 40).padding(.top, 10)
-            ForEach(kids.filter { ($0.ParentIndexNumber ?? 0) == current }) { ep in
-                Button { playEpisode(ep) } label: {
-                    HStack(spacing: 14) {
-                        AsyncImage(url: emby.image(ep.id, width: 320)) { $0.resizable().aspectRatio(contentMode: .fill) }
-                            placeholder: { Color(white: 0.15) }
-                            .frame(width: 160, height: 90).clipped().cornerRadius(4)
-                            .opacity(emby.isPlayed(ep) ? 0.6 : 1)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("S\(ep.ParentIndexNumber ?? 0)·E\(ep.IndexNumber ?? 0)  \(ep.Name)").bold()
-                            Text(ep.Overview ?? "").lineLimit(2).font(.caption).foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if emby.isPlayed(ep) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).font(.title3) }
-                    }.contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).padding(.horizontal, 40)
-                .contextMenu {
-                    Button(emby.isPlayed(ep) ? "Mark as unwatched" : "Mark as watched") {
-                        Task { await emby.setPlayed(ep.id, !emby.isPlayed(ep)) }
-                    }
-                }
+                if played { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).font(.title3) }
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).padding(.horizontal, 40)
+        .contextMenu {
+            Button(played ? "Mark as unwatched" : "Mark as watched") {
+                Task { await emby.setPlayed(ep.id, !played) }
             }
+        }
+    }
+
+    var episodesList: some View {
+        let cur: Int = currentSeason
+        let eps: [Item] = kids.filter { ($0.ParentIndexNumber ?? 0) == cur }
+        return VStack(alignment: .leading, spacing: 12) {
+            if seasonNumbers.count > 1 { seasonRow }
+            episodesHeader
+            ForEach(eps) { ep in episodeRow(ep) }
         }
     }
 
