@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 APP=dist/EmbyFlix.app
+# Version shown in the app: $VERSION if given (e.g. "v0.5Beta"), else the latest git tag plus commits since.
+VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo dev)}"
+SHORT=$(echo "$VERSION" | sed -E 's/^v//; s/^([0-9]+(\.[0-9]+)*).*/\1/'); [[ "$SHORT" =~ ^[0-9] ]] || SHORT=0.0
+BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+echo "Version: $VERSION ($SHORT, build $BUILD)"
 swift build -c release --arch arm64 --arch x86_64
 BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 
@@ -30,8 +35,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>EmbyFlix</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>$SHORT</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
+  <key>EmbyFlixVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>

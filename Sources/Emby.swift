@@ -115,6 +115,12 @@ final class Emby: ObservableObject {
     @Published var played: [String: Bool] = [:]
     @Published var faved: [String: Bool] = [:]
     @Published var servers: [SavedServer] = []
+    /// The saved entry for the server we're signed in to.
+    var currentServer: SavedServer? { servers.first { $0.id == server.lowercased() } }
+    var currentServerName: String {
+        if let n = currentServer?.name, !n.isEmpty { return n }
+        return URL(string: server)?.host ?? server
+    }
     /// Resume positions (seconds) saved during this session; overrides what the server sent with the item.
     @Published var positions: [String: Double] = [:]
     var loggedIn: Bool { !token.isEmpty }
@@ -321,9 +327,10 @@ final class Emby: ObservableObject {
     // MARK: Watched / favorites / play
 
     func isPlayed(_ it: Item) -> Bool { played[it.id] ?? it.UserData?.Played ?? false }
-    /// Where to resume an item from, in seconds (0 = start). Ignores the first 30 s and finished items.
+    /// Where to resume an item from, in seconds (0 = start). Ignores the first 30 s.
+    /// A saved position wins even if the item is marked watched (e.g. re-watching a movie);
+    /// finishing an item or marking it watched in the app clears the position.
     func resumeAt(_ it: Item) -> Double {
-        if isPlayed(it) { return 0 }
         let t = positions[it.id] ?? Double(it.UserData?.PlaybackPositionTicks ?? 0) / 10_000_000
         return t > 30 ? t : 0
     }
@@ -389,6 +396,7 @@ final class Emby: ObservableObject {
     }
     func setPlayed(_ id: String, _ v: Bool) async {
         played[id] = v
+        positions[id] = 0
         await send(v ? "POST" : "DELETE", "/Users/\(userId)/PlayedItems/\(id)")
     }
     func setFav(_ id: String, _ v: Bool) async {

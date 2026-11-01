@@ -29,3 +29,17 @@ struct EmbyFlixApp: App {
         }
     }
 }
+
+/// "v0.5Beta" style version from the app bundle (set by make-app.sh), or "dev" when run from Xcode / swift run.
+enum AppVersion {
+    static var label: String {
+        let i = Bundle.main.infoDictionary
+        if let v = i?["EmbyFlixVersion"] as? String, !v.isEmpty { return pretty(v) }
+        return "dev"
+    }
+    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "" }
+    /// "v0.4Beta" -> "v0.4 Beta"
+    static func pretty(_ v: String) -> String {
+        v.replacingOccurrences(of: #"(\d)(Beta|Alpha|RC)"#, with: "$1 $2", options: .regularExpression)
+    }
+}

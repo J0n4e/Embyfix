@@ -3,18 +3,29 @@ name: Build EmbyFlix.app
 # Manual only: run from the Actions tab ("Run workflow").
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version shown in the app (e.g. v0.5Beta). Leave empty to use the latest git tag.'
+        required: false
+        default: ''
 
 jobs:
   build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags, for the version shown in the app
 
       - name: Show Swift version
         run: swift --version
 
       - name: Build app bundle
-        run: ./make-app.sh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$VERSION" ]; then unset VERSION; fi
+          ./make-app.sh
 
       - name: Zip app
         run: cd dist && ditto -c -k --keepParent EmbyFlix.app EmbyFlix.zip

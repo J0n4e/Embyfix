@@ -86,6 +86,7 @@ struct LoginView: View {
             }
             .frame(width: showForm ? 340 : 520).padding(36)
             .background(Color.black.opacity(0.75)).cornerRadius(8)
+            VStack { Spacer(); Text("EmbyFlix \(AppVersion.label)").font(.caption).foregroundColor(.secondary).padding(12) }
         }
     }
 
@@ -219,17 +220,36 @@ struct HomeView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
             .safeAreaInset(edge: .top) {
-                Text("EMBYFLIX").font(.headline.weight(.black)).foregroundStyle(.tint)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 8)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("EMBYFLIX").font(.headline.weight(.black)).foregroundStyle(.tint)
+                    Text(AppVersion.label).font(.caption2).foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 8)
             }
             .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 12) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
-                        .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
-                    Spacer()
-                    Button("Switch Server") { emby.switchServer() }
-                    Button("Sign Out") { emby.logout() }
-                }.buttonStyle(.plain).font(.caption).padding(10)
+                VStack(alignment: .leading, spacing: 8) {
+                    Button { emby.switchServer() } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "server.rack").foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(emby.currentServerName).font(.callout.weight(.semibold)).lineLimit(1)
+                                Text(emby.currentServer?.user.isEmpty == false ? emby.currentServer!.user : (URL(string: emby.server)?.host ?? ""))
+                                    .font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundColor(.secondary)
+                        }
+                        .padding(8).background(Color.white.opacity(0.07)).cornerRadius(8).contentShape(Rectangle())
+                    }
+                    .help("Connected to \(emby.server) — click to switch server")
+                    HStack(spacing: 12) {
+                        Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                            .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
+                        Spacer()
+                        Button("Switch Server") { emby.switchServer() }
+                        Button("Sign Out") { emby.logout() }
+                    }.font(.caption)
+                }.buttonStyle(.plain).padding(10)
             }
         } detail: {
             NavigationStack(path: $path) {
@@ -465,6 +485,30 @@ struct ListRow: View {
             .contentShape(Rectangle())
             .onHover { hover = $0 }
         }.buttonStyle(.plain)
+    }
+}
+
+/// "‹ Back" pill button used on detail pages and in the player.
+struct BackPill: View {
+    var compact = false
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: compact ? 6 : 8) {
+                Image(systemName: "chevron.left").font(.system(size: compact ? 14 : 18, weight: .bold))
+                Text("Back").font(.system(size: compact ? 14 : 16, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, compact ? 12 : 16).padding(.vertical, compact ? 5 : 10)
+            .background(Capsule().fill(Color.black.opacity(hover ? 0.85 : 0.6)))
+            .overlay(Capsule().stroke(Color.white.opacity(hover ? 0.7 : 0.3), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .keyboardShortcut("[", modifiers: .command)
     }
 }
 
@@ -756,6 +800,7 @@ struct CastTile: View {
 struct DetailView: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.appBG) var bg
+    @Environment(\.dismiss) var dismiss
     let item: Item
     @State private var full: Full?
     @State private var kids: [Item] = []
@@ -845,6 +890,8 @@ struct DetailView: View {
             if !item.isEpisode { similar = await emby.similar(item.id) }
         }
         .onChange(of: srcIdx) { audioIdx = defaultAudio; subIdx = -1; applyPreferredSub() }
+        .navigationBarBackButtonHidden(true)
+        .toolbar { ToolbarItem(placement: .navigation) { BackPill(compact: true) { dismiss() } } }
     }
 
     // Header: poster + info + pickers + buttons
@@ -1479,7 +1526,8 @@ struct PlayerView: View {
     @AppStorage("skipSeconds") private var skipSecs = 10
     @AppStorage("autoNext") private var autoNext = true
     @AppStorage("clickToPause") private var clickToPause = true
-    @State private var backHover = false
+    @State private var isFullScreen = false
+    @State private var enteredFullScreen = false
 
     static let sizes: [(String, String, Double)] = [("smaller", "Smaller", 0.032), ("small", "Small", 0.038),
         ("normal", "Normal", 0.045), ("large", "Large", 0.055), ("larger", "Larger", 0.066)]
@@ -1493,7 +1541,19 @@ struct PlayerView: View {
     var prevEp: Item? { episodes.firstIndex(where: { $0.Id == item.Id }).flatMap { $0 > 0 ? episodes[$0 - 1] : nil } }
     var nextEp: Item? { episodes.firstIndex(where: { $0.Id == item.Id }).flatMap { $0 + 1 < episodes.count ? episodes[$0 + 1] : nil } }
 
+    var window: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
+
+    /// Full screen for the video; leaving the player restores the window if the player made it full screen.
+    func toggleFullScreen() {
+        guard let w = window else { return }
+        let on = w.styleMask.contains(.fullScreen)
+        if !on { enteredFullScreen = true }
+        w.toggleFullScreen(nil)
+        isFullScreen = !on
+    }
+
     func close() {
+        if enteredFullScreen, let w = window, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
         let done = model.watchedEnough
         model.stop()
         emby.playing = nil
@@ -1582,6 +1642,10 @@ struct PlayerView: View {
         .onContinuousHover { _ in poke() }
         .focusable().focused($focused).focusEffectDisabled()
         .onKeyPress(.space) { model.togglePlay(); poke(); return .handled }
+        .onKeyPress("f") { toggleFullScreen(); return .handled }
+        .toolbar(.hidden, for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in isFullScreen = true }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in isFullScreen = false }
         .onKeyPress(.leftArrow) { model.skip(-Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.escape) { if panel != nil { panel = nil } else { close() }; return .handled }
@@ -1638,21 +1702,7 @@ struct PlayerView: View {
 
     var topBar: some View {
         HStack(spacing: 16) {
-            Button { close() } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.left").font(.system(size: 18, weight: .bold))
-                    Text("Back").font(.system(size: 16, weight: .semibold))
-                }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(Capsule().fill(Color.black.opacity(backHover ? 0.85 : 0.6)))
-                .overlay(Capsule().stroke(Color.white.opacity(backHover ? 0.7 : 0.3), lineWidth: 1))
-                .scaleEffect(backHover ? 1.05 : 1)
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .onHover { backHover = $0 }
-            .animation(.easeOut(duration: 0.12), value: backHover)
-            .help("Back (Esc)")
+            BackPill { close() }.help("Back (Esc)")
             AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
             } placeholder: { EmptyView() }
@@ -1719,9 +1769,9 @@ struct PlayerView: View {
                 iconButton("forward.end.fill", size: 18) { if let n = nextEp { play(n) } }
                     .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
                 Spacer()
-                iconButton("arrow.up.left.and.arrow.down.right", size: 18) {
-                    NSApp.keyWindow?.toggleFullScreen(nil)
-                }.help("Full screen")
+                iconButton(isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", size: 18) {
+                    toggleFullScreen()
+                }.help(isFullScreen ? "Exit full screen (F)" : "Full screen (F)")
             }
             .padding(.top, 4)
         }
