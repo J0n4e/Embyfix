@@ -8,6 +8,10 @@ struct EmbyFlixApp: App {
     @AppStorage("bg") private var bg = "black"
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
+        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+           let img = NSImage(contentsOf: url) {
+            NSApplication.shared.applicationIconImage = img
+        }
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
     var body: some Scene {

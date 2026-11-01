@@ -3,5 +3,5 @@ import PackageDescription
 let package = Package(
     name: "EmbyFlix",
     platforms: [.macOS(.v14)],
-    targets: [.executableTarget(name: "EmbyFlix", path: "Sources")]
+    targets: [.executableTarget(name: "EmbyFlix", path: "Sources", resources: [.copy("Resources/AppIcon.png")])]
 )

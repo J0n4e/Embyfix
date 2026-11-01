@@ -40,6 +40,8 @@ struct MStream: Decodable, Identifiable {
     let `Type`: String?
     let DisplayTitle: String?
     let IsDefault: Bool?
+    let Language: String?
+    let Codec: String?
     var id: Int { Index }
 }
 struct MSource: Decodable, Identifiable {
@@ -221,6 +223,11 @@ final class Emby: ObservableObject {
         return r?.Items ?? []
     }
 
+    func seasons(_ seriesId: String) async -> [Item] {
+        let r: ItemList? = try? await get("/Shows/\(seriesId)/Seasons", ["UserId": userId])
+        return r?.Items ?? []
+    }
+
     func children(_ parentId: String) async -> [Item] {
         let r: ItemList? = try? await get("/Users/\(userId)/Items", ["ParentId": parentId, "Fields": "Overview", "SortBy": "SortName"])
         return r?.Items ?? []
@@ -278,6 +285,32 @@ final class Emby: ObservableObject {
         return URL(string: s)
     }
 
+    /// The server ignores the requested subtitle and burns in the user's default track,
+    /// so force the chosen track into the transcode URL (or strip subtitles when "Off").
+    static func fixSubtitle(_ url: String, _ sub: Int?) -> String {
+        guard var c = URLComponents(string: url) else { return url }
+        var q = (c.queryItems ?? []).filter { $0.name != "SubtitleStreamIndex" && $0.name != "SubtitleMethod" }
+        if let sub {
+            q.append(URLQueryItem(name: "SubtitleStreamIndex", value: String(sub)))
+            q.append(URLQueryItem(name: "SubtitleMethod", value: "Encode"))
+        }
+        c.queryItems = q
+        return c.string ?? url
+    }
+
+    /// Downloads a subtitle track as SRT (the server converts embedded text subs too).
+    /// Returns nil for image subtitles (PGS etc.) that can't be converted.
+    func subtitleCues(_ itemId: String, _ sourceId: String?, _ index: Int) async -> [Cue]? {
+        var sid = sourceId
+        if sid == nil { sid = await full(itemId)?.MediaSources?.first?.Id }
+        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt?api_key=\(token)"),
+              let (data, resp) = try? await URLSession.shared.data(from: u),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return nil }
+        let cues = Cue.parseSRT(text)
+        return cues.isEmpty ? nil : cues
+    }
+
     /// Asks the server how to play the item for AVPlayer: direct play for MP4/MOV, otherwise HLS transcode
     /// (also used whenever a subtitle, a different audio track or a lower quality is chosen).
     func resolveStream(_ req: PlayRequest, direct: Bool = true) async -> URL? {
@@ -318,9 +351,37 @@ final class Emby: ObservableObject {
                cont.contains(where: { ["mp4", "m4v", "mov"].contains($0) }) {
                 return URL(string: "\(server)/Videos/\(id)/stream.mp4?Static=true&MediaSourceId=\(sid)&api_key=\(token)")
             }
-            if let t = src["TranscodingUrl"] as? String { return absolute(t) }
+            if let t = src["TranscodingUrl"] as? String { return absolute(Self.fixSubtitle(t, req.sub)) }
             if let t = src["DirectStreamUrl"] as? String { return absolute(t) }
         }
         return URL(string: "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&VideoCodec=h264&AudioCodec=aac&api_key=\(token)")
+    }
+}
+
+
+struct Cue {
+    let start: Double
+    let end: Double
+    let text: String
+
+    static func parseSRT(_ srt: String) -> [Cue] {
+        func secs(_ t: String) -> Double? {
+            let p = t.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".").split(separator: ":")
+            guard p.count == 3, let h = Double(p[0]), let m = Double(p[1]), let s = Double(p[2]) else { return nil }
+            return h * 3600 + m * 60 + s
+        }
+        var out: [Cue] = []
+        let blocks = srt.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n")
+        for b in blocks {
+            let lines = b.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+            guard let ti = lines.firstIndex(where: { $0.contains("-->") }) else { continue }
+            let parts = lines[ti].components(separatedBy: "-->")
+            guard parts.count == 2, let a = secs(parts[0]), let e = secs(String(parts[1].prefix(13))) else { continue }
+            let text = lines[(ti + 1)...].joined(separator: "\n")
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "\\{[^}]*\\}", with: "", options: .regularExpression)
+            if !text.isEmpty { out.append(Cue(start: a, end: e, text: text)) }
+        }
+        return out.sorted { $0.start < $1.start }
     }
 }
