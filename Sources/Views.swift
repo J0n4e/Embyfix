@@ -1349,7 +1349,7 @@ final class PlayerModel: ObservableObject {
             error = "Couldn't get a stream from the server."; return
         }
         let method = u.absoluteString.contains("Static=true") ? "DirectPlay" : "Transcode"
-        session = Emby.PlaySession(itemId: req.item.id, sourceId: req.sourceId, method: method)
+        session = Emby.PlaySession(itemId: req.item.id, sourceId: req.sourceId, method: method, url: u)
         let it = AVPlayerItem(url: u)
         obs = it.observe(\.status, options: [.new]) { [weak self] i, _ in
             if i.status == .failed {
@@ -1494,6 +1494,8 @@ final class PlayerModel: ObservableObject {
             let d = p.currentItem?.duration.seconds ?? 0
             let e = emby
             Task { await e?.reportStopped(ps, t.isFinite ? t : 0, duration: d.isFinite ? d : 0) }
+        } else if let ps = session, let e = emby {
+            Task { await e.stopEncoding(ps) }   // closed before playback began: still kill the transcode
         }
         session = nil
         reportedStart = false; lastReport = 0

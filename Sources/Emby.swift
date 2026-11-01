@@ -358,8 +358,22 @@ final class Emby: ObservableObject {
     struct PlaySession {
         let itemId: String
         let sourceId: String?
-        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let method: String          // DirectPlay | DirectStream | Transcode
+        /// Must be the server's PlaySessionId (from the stream URL), or the server can't
+        /// match our stop report to its transcode and leaves the ffmpeg job + temp files running.
+        var id: String = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+
+        init(itemId: String, sourceId: String?, method: String, url: URL) {
+            self.itemId = itemId; self.sourceId = sourceId; self.method = method
+            let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if let v = q.first(where: { $0.name.lowercased() == "playsessionid" })?.value, !v.isEmpty { id = v }
+        }
+    }
+
+    /// Kills the server-side transcode (ffmpeg) and its temp segments for this playback.
+    func stopEncoding(_ s: PlaySession) async {
+        guard s.method != "DirectPlay" else { return }
+        await send("DELETE", "/Videos/ActiveEncodings?DeviceId=\(deviceId)&PlaySessionId=\(s.id)")
     }
 
     private func progressBody(_ s: PlaySession, _ sec: Double, paused: Bool = false) -> [String: Any] {
@@ -383,6 +397,7 @@ final class Emby: ObservableObject {
         positions[s.itemId] = finished ? 0 : sec
         if finished { played[s.itemId] = true }
         await postJSON("/Sessions/Playing/Stopped", progressBody(s, sec))
+        await stopEncoding(s)
     }
 
     func isFav(_ it: Item) -> Bool { faved[it.id] ?? it.UserData?.IsFavorite ?? false }
@@ -510,7 +525,7 @@ final class Emby: ObservableObject {
             if let t = src["TranscodingUrl"] as? String { return absolute(Self.fixSubtitle(t, req.sub)) }
             if let t = src["DirectStreamUrl"] as? String { return absolute(t) }
         }
-        return URL(string: "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&VideoCodec=h264&AudioCodec=aac&api_key=\(token)")
+        return URL(string: "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&PlaySessionId=\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))&VideoCodec=h264&AudioCodec=aac&api_key=\(token)")
     }
 }
 
