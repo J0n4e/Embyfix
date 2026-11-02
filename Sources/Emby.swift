@@ -244,6 +244,25 @@ final class Emby: ObservableObject {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    /// Debug: this device's session as the server sees it (play state + transcode info), as raw JSON.
+    func mySessionJSON() async -> String {
+        guard let u = URL(string: "\(server)/Sessions?DeviceId=\(deviceId)") else { return "" }
+        var r = URLRequest(url: u)
+        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        guard let (d, _) = try? await URLSession.shared.data(for: r),
+              let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]], let s = arr.first else { return "no session" }
+        var out: [String: Any] = [:]
+        if let ps = s["PlayState"] as? [String: Any] {
+            out["pos"] = (ps["PositionTicks"] as? Double ?? 0) / 10_000_000
+            out["paused"] = ps["IsPaused"]; out["method"] = ps["PlayMethod"]
+        }
+        if let t = s["TranscodingInfo"] as? [String: Any] {
+            for k in ["IsPaused", "CompletionPercentage", "TranscodingPositionTicks", "TranscodingStartPositionTicks", "Framerate", "CurrentThrottle"] { out[k] = t[k] }
+        } else { out["transcode"] = "none" }
+        let j = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+        return j.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
     func image(_ id: String, _ kind: String = "Primary", width: Int = 400) -> URL? {
         URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&api_key=\(token)")
     }

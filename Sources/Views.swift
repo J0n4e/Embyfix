@@ -1461,10 +1461,56 @@ final class PlayerModel: ObservableObject {
         Task { await emby?.reportProgress(ps, t, paused: paused) }
     }
 
+    private var pausedAt: Date?
+    private var debugTimer: Timer?
+
     func togglePlay() {
         guard let p = player else { return }
-        if p.rate > 0 { p.pause() } else { p.play() }
+        if p.rate > 0 {
+            p.pause(); pausedAt = Date()
+            dlog("pause at \(fmt(now))")
+            startDebugPolling()
+        } else {
+            let away = pausedAt.map { Date().timeIntervalSince($0) } ?? 0
+            pausedAt = nil
+            debugTimer?.invalidate(); debugTimer = nil
+            dlog("resume at \(fmt(now)) after \(Int(away))s pause")
+            // After a long pause the server may have stopped/restarted its transcode, shifting the
+            // stream's timeline. Re-seeking makes the player fetch fresh segments and realign its clock.
+            if away > 30, session?.method == "Transcode" {
+                let t = now
+                dlog("realign: re-seek to \(fmt(t))")
+                p.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor in self?.dlog("realigned, player at \(self?.fmt(self?.now ?? 0) ?? "")"); self?.logServer() }
+                }
+            }
+            p.play()
+        }
         playing = p.rate > 0
+    }
+
+    // MARK: debug log (~/Library/Logs/EmbyFlix.log)
+    private func fmt(_ t: Double) -> String { String(format: "%.2fs", t) }
+    private func startDebugPolling() {
+        logServer()
+        debugTimer?.invalidate()
+        debugTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.logServer() }
+        }
+    }
+    private func logServer() {
+        guard let e = emby else { return }
+        let t = now, ev = player?.currentItem?.accessLog()?.events.last
+        Task { @MainActor in
+            let s = await e.mySessionJSON()
+            self.dlog("player \(self.fmt(t)) segs=\(ev?.numberOfMediaRequests ?? 0) stalls=\(ev?.numberOfStalls ?? 0) | server \(s)")
+        }
+    }
+    func dlog(_ m: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(m)\n"
+        let u = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/EmbyFlix.log")
+        if let h = try? FileHandle(forWritingTo: u) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? Data(line.utf8).write(to: u) }
     }
 
     func seek(to t: Double) {
@@ -1501,6 +1547,7 @@ final class PlayerModel: ObservableObject {
         reportedStart = false; lastReport = 0
         if let o = timeObs { player?.removeTimeObserver(o) }
         timeObs = nil
+        debugTimer?.invalidate(); debugTimer = nil; pausedAt = nil
         player?.pause(); player = nil; obs = nil; caption = ""
     }
 }
