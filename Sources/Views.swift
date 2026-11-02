@@ -354,14 +354,14 @@ struct HomeContent: View {
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 12) {
                         Text(row.title).font(.title3.bold()).padding(.leading, 32)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: 14) {
-                                if row.title == "Continue Watching" {
-                                    ForEach(row.items) { ResumeCard(item: $0) }
-                                } else {
-                                    ForEach(row.items) { PosterCard(item: $0) }
-                                }
-                            }.padding(.horizontal, 32).padding(.vertical, 6)
+                        if row.title == "Continue Watching" {
+                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 260, spacing: 14, inset: 32) {
+                                ResumeCard(item: row.items[$0])
+                            }
+                        } else {
+                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 150, spacing: 14, inset: 32) {
+                                PosterCard(item: row.items[$0])
+                            }
                         }
                     }
                 }
@@ -686,7 +686,7 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
                     ForEach(ids, id: \.self) { id in content(id).id(id) }
                 }
                 .scrollTargetLayout()
-                .padding(.vertical, 4).padding(.bottom, 10)
+                .padding(.vertical, 8).padding(.bottom, 8)
             }
             .contentMargins(.horizontal, inset, for: .scrollContent)
             .scrollPosition(id: $pos)
@@ -1377,9 +1377,7 @@ struct DetailView: View {
         if !people.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Cast & Crew").font(.title3.bold()).padding(.horizontal, 40)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(alignment: .top, spacing: 18) { ForEach(people) { CastTile(p: $0) } }.padding(.horizontal, 40)
-                }
+                ArrowScrollRow(ids: Array(people.indices), itemWidth: 104) { CastTile(p: people[$0]) }
             }
         }
     }
@@ -1432,9 +1430,7 @@ struct DetailView: View {
         if !similar.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("More Like This").font(.title3.bold()).padding(.horizontal, 40)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) { ForEach(similar) { PosterCard(item: $0) } }.padding(.horizontal, 40)
-                }
+                ArrowScrollRow(ids: Array(similar.indices), itemWidth: 150, spacing: 14) { PosterCard(item: similar[$0]) }
             }
         }
     }
@@ -1720,7 +1716,7 @@ struct PlayerView: View {
     @StateObject private var model = PlayerModel()
     let req: PlayRequest
 
-    enum Panel { case subtitles, appearance, speed, settings }
+    enum Panel { case subtitles, appearance }
     @State private var panel: Panel?
     @State private var showUI = true
     @State private var hideTask: Task<Void, Never>?
@@ -1946,15 +1942,9 @@ struct PlayerView: View {
                 }
                 Spacer()
                 HStack(spacing: 26) {
-                    iconButton("captions.bubble", on: panel == .subtitles || panel == .appearance) {
-                        panel = panel == .subtitles ? nil : .subtitles
-                    }.help("Subtitles")
-                    iconButton("gauge.with.dots.needle.67percent", on: panel == .speed) {
-                        panel = panel == .speed ? nil : .speed
-                    }.help("Playback speed")
-                    iconButton("gearshape.fill", on: panel == .settings) {
-                        panel = panel == .settings ? nil : .settings
-                    }.help("Settings")
+                    iconButton("captions.bubble", on: panel != nil) {
+                        withAnimation(.easeOut(duration: 0.2)) { panel = panel == nil ? .subtitles : nil }
+                    }.help("Subtitles, audio, quality & speed")
                 }
             }
 
@@ -2011,36 +2001,14 @@ struct PlayerView: View {
 
     @ViewBuilder var panelLayer: some View {
         switch panel {
-        case .subtitles: popup { subtitlesPanel }
-        case .speed: popup { speedPanel }
-        case .settings: popup { settingsPanel }
+        case .subtitles:
+            HStack { Spacer(); mediaPanel }
+                .padding(.top, 84).padding(.bottom, 190).padding(.trailing, 24)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
         case .appearance:
             HStack { Spacer(); appearancePanel }.transition(.move(edge: .trailing))
         case nil: EmptyView()
         }
-    }
-
-    func popup<C: View>(@ViewBuilder _ c: () -> C) -> some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                VStack(alignment: .leading, spacing: 0) { c() }
-                    .padding(.vertical, 14)
-                    .frame(width: 340)
-                    .background(.ultraThinMaterial.opacity(0.95))
-                    .background(Color(white: 0.15).opacity(0.85))
-                    .cornerRadius(14)
-                    .environment(\.colorScheme, .dark)
-                    .onTapGesture {}   // keep taps inside the panel
-            }
-            .padding(.trailing, 30).padding(.bottom, 190)
-        }
-    }
-
-    func panelTitle(_ t: String) -> some View {
-        Text(t).font(.system(size: 16, weight: .semibold)).foregroundColor(.secondary)
-            .frame(maxWidth: .infinity).padding(.bottom, 8)
     }
 
     func row(_ icon: String, _ title: String, sub: String? = nil, checked: Bool = false, _ action: @escaping () -> Void) -> some View {
@@ -2060,65 +2028,82 @@ struct PlayerView: View {
         }.buttonStyle(PanelRowStyle())
     }
 
-    var subtitlesPanel: some View {
-        Group {
-            panelTitle("Subtitles")
-            row("textformat.size", "Subtitle Appearance") { withAnimation { panel = .appearance } }
-            HStack(spacing: 18) {
-                Image(systemName: "timer").font(.system(size: 18)).frame(width: 26)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Subtitle Offset").font(.system(size: 16))
-                    Text("\(model.subOffset) ms").font(.system(size: 13)).foregroundColor(.secondary)
+    func sectionTitle(_ t: String) -> some View {
+        Text(t).font(.system(size: 13, weight: .semibold)).foregroundColor(.secondary)
+            .padding(.horizontal, 22).padding(.top, 10).padding(.bottom, 4)
+    }
+
+    func panelDivider() -> some View { Divider().padding(.horizontal, 18).padding(.vertical, 6) }
+
+    /// One side panel with everything the old Subtitles, Speed and Settings popups had.
+    var mediaPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionTitle("Subtitles")
+                row("captions.bubble", "Off", checked: model.sub == nil) { Task { await model.setSub(emby, nil) } }
+                ForEach(model.subStreams) { st in
+                    row("captions.bubble", st.DisplayTitle ?? "Track \(st.Index)", checked: model.sub == st.Index) {
+                        Task { await model.setSub(emby, st.Index) }
+                    }
                 }
-                Spacer()
-                Button { model.subOffset -= 100 } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain)
-                Button { model.subOffset = 0 } label: { Image(systemName: "arrow.counterclockwise") }.buttonStyle(.plain)
-                    .opacity(model.subOffset == 0 ? 0.3 : 1)
-                Button { model.subOffset += 100 } label: { Image(systemName: "plus.circle") }.buttonStyle(.plain)
-            }
-            .font(.system(size: 18))
-            .padding(.horizontal, 22).padding(.vertical, 9)
-            Divider().padding(.horizontal, 18).padding(.vertical, 4)
-            ScrollView {
-                VStack(spacing: 0) {
-                    row("captions.bubble", "Off", checked: model.sub == nil) { Task { await model.setSub(emby, nil) } }
-                    ForEach(model.subStreams) { st in
-                        row("captions.bubble", st.DisplayTitle ?? "Track \(st.Index)", checked: model.sub == st.Index) {
-                            Task { await model.setSub(emby, st.Index) }
+                HStack(spacing: 18) {
+                    Image(systemName: "timer").font(.system(size: 18)).frame(width: 26)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Subtitle Offset").font(.system(size: 16))
+                        Text("\(model.subOffset) ms").font(.system(size: 13)).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button { model.subOffset -= 100 } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain)
+                        .help("Show subtitles 100 ms earlier")
+                    Button { model.subOffset = 0 } label: { Image(systemName: "arrow.counterclockwise") }.buttonStyle(.plain)
+                        .opacity(model.subOffset == 0 ? 0.3 : 1).help("Reset offset")
+                    Button { model.subOffset += 100 } label: { Image(systemName: "plus.circle") }.buttonStyle(.plain)
+                        .help("Show subtitles 100 ms later")
+                }
+                .font(.system(size: 18))
+                .padding(.horizontal, 22).padding(.vertical, 9)
+                row("textformat.size", "Subtitle Appearance") { withAnimation { panel = .appearance } }
+
+                if model.audioStreams.count > 0 {
+                    panelDivider()
+                    sectionTitle("Audio")
+                    ForEach(model.audioStreams) { st in
+                        row("waveform", st.DisplayTitle ?? "Track \(st.Index)", checked: model.audio == st.Index) {
+                            Task { await model.setAudio(emby, st.Index) }
                         }
                     }
                 }
-            }.frame(maxHeight: 300).fixedSize(horizontal: false, vertical: true)
-        }
-    }
 
-    var speedPanel: some View {
-        Group {
-            panelTitle("Playback Speed")
-            ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0] as [Float], id: \.self) { r in
-                row("gauge.with.dots.needle.67percent", r == 1 ? "Normal" : String(format: "%gx", r),
-                    checked: model.speed == r) { model.setSpeed(r) }
-            }
-        }
-    }
+                panelDivider()
+                sectionTitle("Quality")
+                ForEach([(0, "Original"), (8_000_000, "1080p · 8 Mbps"), (4_000_000, "720p · 4 Mbps"), (1_500_000, "480p · 1.5 Mbps")], id: \.0) { q in
+                    row("dial.medium", q.1, checked: model.quality == q.0) { Task { await model.setQuality(emby, q.0) } }
+                }
 
-    var settingsPanel: some View {
-        Group {
-            panelTitle("Settings")
-            if model.audioStreams.count > 0 {
-                Text("Audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.secondary).padding(.horizontal, 22).padding(.top, 4)
-                ForEach(model.audioStreams) { st in
-                    row("waveform", st.DisplayTitle ?? "Track \(st.Index)", checked: model.audio == st.Index) {
-                        Task { await model.setAudio(emby, st.Index) }
+                panelDivider()
+                sectionTitle("Speed")
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0] as [Float], id: \.self) { r in
+                        let on = model.speed == r
+                        Button { model.setSpeed(r) } label: {
+                            Text(r == 1 ? "1×" : String(format: "%g×", r)).font(.system(size: 14, weight: .semibold))
+                                .frame(maxWidth: .infinity).frame(height: 36)
+                                .foregroundColor(on ? .black : .white)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(on ? accent : Color.white.opacity(0.1)))
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.plain).help(r == 1 ? "Normal speed" : "\(String(format: "%g", r))× speed")
                     }
                 }
-                Divider().padding(.horizontal, 18).padding(.vertical, 4)
+                .padding(.horizontal, 22).padding(.bottom, 6)
             }
-            Text("Quality").font(.system(size: 13, weight: .semibold)).foregroundColor(.secondary).padding(.horizontal, 22).padding(.top, 4)
-            ForEach([(0, "Original"), (8_000_000, "1080p · 8 Mbps"), (4_000_000, "720p · 4 Mbps"), (1_500_000, "480p · 1.5 Mbps")], id: \.0) { q in
-                row("dial.medium", q.1, checked: model.quality == q.0) { Task { await model.setQuality(emby, q.0) } }
-            }
+            .padding(.vertical, 12)
         }
+        .frame(width: 340)
+        .background(.ultraThinMaterial.opacity(0.95))
+        .background(Color(white: 0.15).opacity(0.85))
+        .cornerRadius(14)
+        .environment(\.colorScheme, .dark)
+        .onTapGesture {}   // keep taps inside the panel
     }
 
     func dropdown<T: Hashable>(_ label: String, _ sel: Binding<T>, _ opts: [(T, String)]) -> some View {
