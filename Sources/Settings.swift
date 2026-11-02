@@ -332,6 +332,7 @@ struct PlaybackSettings: View {
     @AppStorage("defaultQuality") private var quality = 0
     @AppStorage("defaultSpeed") private var speed = 1.0
     @AppStorage("autoNext") private var autoNext = true
+    @AppStorage("autoSkipIntro") private var autoSkipIntro = true
     @AppStorage("skipSeconds") private var skip = 10
     @AppStorage("clickToPause") private var clickToPause = true
 
@@ -347,6 +348,7 @@ struct PlaybackSettings: View {
                 segmented($skip, [(5, "5 s"), (10, "10 s"), (15, "15 s"), (30, "30 s")])
             }
             Toggle("Play next episode automatically", isOn: $autoNext)
+            Toggle("Skip intros automatically", isOn: $autoSkipIntro)
             Toggle("Click on the video to play / pause", isOn: $clickToPause)
             Text("When off, clicking the video shows or hides the controls.").font(.caption).foregroundColor(.secondary)
         }

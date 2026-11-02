@@ -1518,6 +1518,28 @@ final class PlayerModel: ObservableObject {
     private var reportedStart = false
     private var session: Emby.PlaySession?
 
+    // Chapters, intro/credits markers, scrub thumbnails, picture-in-picture
+    @Published var chapters: [Chapter] = []
+    @Published var hasThumbs = false
+    @Published var inIntro = false            // shown as a "Skip Intro" button when auto-skip is off
+    @Published var skippedIntro = false       // brief "Intro skipped" notice
+    @Published var pipActive = false
+    private var metaFor = ""
+    private var introDone = false
+    private var bif = Data()
+    private var frames: [(t: Double, r: Range<Int>)] = []
+    private var thumbCache: [Int: NSImage] = [:]
+    private var pip: AVPictureInPictureController?
+    private var pipObs: NSKeyValueObservation?
+
+    var introStart: Double? { chapters.first { $0.MarkerType == "IntroStart" }?.start }
+    var introEnd: Double? { chapters.first { $0.MarkerType == "IntroEnd" }?.start }
+    var creditsStart: Double? { chapters.first { $0.MarkerType == "CreditsStart" }?.start }
+    /// Real chapters with their index on the server (needed for chapter images).
+    var chapterList: [(i: Int, c: Chapter)] { chapters.enumerated().filter { !$0.element.isMarker }.map { ($0.offset, $0.element) } }
+    var isTranscoding: Bool { session?.method == "Transcode" }
+    var autoSkipIntro: Bool { UserDefaults.standard.object(forKey: "autoSkipIntro") as? Bool ?? true }
+
     var audioStreams: [MStream] { streams.filter { $0.`Type` == "Audio" } }
     var subStreams: [MStream] { streams.filter { $0.`Type` == "Subtitle" } }
     var now: Double { player?.currentTime().seconds ?? 0 }
@@ -1534,13 +1556,30 @@ final class PlayerModel: ObservableObject {
         if pendingSeek == 0, let s = req.start, s > 0 { pendingSeek = s }
         self.req = req
         sub = req.sub; quality = req.maxBitrate ?? 0
-        if streams.isEmpty, let f = await emby.full(req.item.id) {
+        if streams.isEmpty || metaFor != req.item.id, let f = await emby.full(req.item.id) {
             let src = f.MediaSources?.first { $0.Id == req.sourceId } ?? f.MediaSources?.first
-            streams = src?.MediaStreams ?? []
+            if streams.isEmpty { streams = src?.MediaStreams ?? [] }
+            if metaFor != req.item.id {
+                metaFor = req.item.id
+                chapters = f.Chapters ?? []
+                introDone = false; inIntro = false
+                loadThumbs(emby, req.item.id, src?.Id)
+            }
         }
         let auds = streams.filter { $0.`Type` == "Audio" }
         audio = req.audio ?? (auds.first { $0.IsDefault == true } ?? auds.first)?.Index
         var req = req
+        // Audio / subtitles remembered for this series
+        if req.item.isEpisode, let sid = req.item.SeriesId, let m = SeriesLang.get(sid) {
+            if req.sub == nil, !req.noSub, let l = m["sub"] {
+                if l == "off" { req.noSub = true; self.req?.noSub = true }
+                else if let i = preferredSub(streams, lang: l) { req.sub = i; sub = i; self.req?.sub = i }
+            }
+            if req.audio == nil, let l = m["audio"],
+               let st = auds.first(where: { ($0.Language ?? "").lowercased() == l.lowercased() }), st.Index != audio {
+                req.audio = st.Index; audio = st.Index; self.req?.audio = st.Index
+            }
+        }
         // "Always load preferred subtitle language"
         let d = UserDefaults.standard
         if req.sub == nil, !req.noSub, d.bool(forKey: "subAlways"), let lang = d.string(forKey: "subLang"), !lang.isEmpty,
@@ -1617,6 +1656,9 @@ final class PlayerModel: ObservableObject {
 
     func setSub(_ emby: Emby, _ idx: Int?) async {
         guard idx != sub, let r = req else { return }
+        if r.item.isEpisode, let sid = r.item.SeriesId {
+            SeriesLang.set(sid, "sub", idx.flatMap { i in streams.first { $0.Index == i } }.map(subLangName) ?? "off")
+        }
         let wasBurned = sub.map(isImageSub) ?? false
         if let idx {
             if isImageSub(idx) {
@@ -1635,6 +1677,10 @@ final class PlayerModel: ObservableObject {
 
     func setAudio(_ emby: Emby, _ idx: Int) async {
         guard idx != audio else { return }
+        if let r = req, r.item.isEpisode, let sid = r.item.SeriesId,
+           let l = streams.first(where: { $0.Index == idx })?.Language, !l.isEmpty {
+            SeriesLang.set(sid, "audio", l)
+        }
         await restart(emby) { $0.audio = idx }
     }
 
@@ -1659,6 +1705,126 @@ final class PlayerModel: ObservableObject {
         }
         sendProgress(t)
         updateCaption(t)
+        checkIntro(t)
+    }
+
+    private func checkIntro(_ t: Double) {
+        guard let s = introStart, let e = introEnd, e > s + 2, t.isFinite else { return }
+        let inside = t >= s && t < e - 1
+        if inside, !introDone, autoSkipIntro {
+            introDone = true
+            seek(to: e)
+            skippedIntro = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                self.skippedIntro = false
+            }
+            return
+        }
+        if inside != inIntro { inIntro = inside && !autoSkipIntro }
+    }
+
+    func skipIntro() { if let e = introEnd { introDone = true; inIntro = false; seek(to: e) } }
+    func watchIntro() { if let s = introStart { skippedIntro = false; seek(to: s) } }
+
+    // MARK: Scrub thumbnails (BIF)
+
+    private func loadThumbs(_ emby: Emby, _ id: String, _ sourceId: String?) {
+        bif = Data(); frames = []; thumbCache = [:]; hasThumbs = false
+        Task { @MainActor in
+            guard let d = await emby.bifData(id, sourceId), self.metaFor == id else { return }
+            let f = Self.parseBIF(d)
+            self.bif = d; self.frames = f; self.hasThumbs = !f.isEmpty
+        }
+    }
+
+    /// BIF: 64-byte header (magic, version, count @12, ms per frame @16), then (frame, offset) pairs.
+    static func parseBIF(_ d: Data) -> [(t: Double, r: Range<Int>)] {
+        let magic: [UInt8] = [0x89, 0x42, 0x49, 0x46]
+        guard d.count > 72, Array(d.prefix(4)) == magic else { return [] }
+        func u32(_ o: Int) -> Int {
+            guard o + 4 <= d.count else { return 0 }
+            return d.withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: o, as: UInt32.self))) }
+        }
+        let count = u32(12)
+        let sep = Double(u32(16) == 0 ? 1000 : u32(16)) / 1000
+        var out: [(t: Double, r: Range<Int>)] = []
+        guard count > 0, 64 + 8 * (count + 1) <= d.count else { return [] }
+        for i in 0..<count {
+            let ts = u32(64 + 8 * i), a = u32(64 + 8 * i + 4), b = u32(64 + 8 * (i + 1) + 4)
+            if ts == 0xFFFF_FFFF { break }
+            if a < b, b <= d.count { out.append((Double(ts) * sep, a..<b)) }
+        }
+        return out
+    }
+
+    func thumb(at t: Double) -> NSImage? {
+        guard !frames.isEmpty else { return nil }
+        var lo = 0, hi = frames.count - 1, f = 0
+        while lo <= hi {
+            let m = (lo + hi) / 2
+            if frames[m].t <= t { f = m; lo = m + 1 } else { hi = m - 1 }
+        }
+        if let img = thumbCache[f] { return img }
+        let img = NSImage(data: bif.subdata(in: frames[f].r))
+        if thumbCache.count > 200 { thumbCache.removeAll() }
+        thumbCache[f] = img
+        return img
+    }
+
+    // MARK: Picture in picture
+
+    var pipSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
+
+    func attach(_ layer: AVPlayerLayer) {
+        guard pipSupported, pip?.playerLayer !== layer else { return }
+        pip = AVPictureInPictureController(playerLayer: layer)
+        pipObs = pip?.observe(\.isPictureInPictureActive, options: [.new]) { [weak self] c, _ in
+            let on = c.isPictureInPictureActive
+            Task { @MainActor in self?.pipActive = on }
+        }
+    }
+
+    func togglePiP() {
+        guard let p = pip else { return }
+        if p.isPictureInPictureActive { p.stopPictureInPicture() } else { p.startPictureInPicture() }
+    }
+
+    // MARK: Playback info
+
+    func playbackInfo() async -> [(String, String)] {
+        func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
+        func mbps(_ b: Double) -> String { b >= 1_000_000 ? String(format: "%.1f Mbps", b / 1_000_000) : "\(Int(b / 1000)) kbps" }
+        var out: [(String, String)] = []
+        out.append(("Play method", isTranscoding ? "Transcode" : "Direct play"))
+        if let v = streams.first(where: { $0.`Type` == "Video" }) {
+            var s = (v.Codec ?? "?").uppercased()
+            if let w = v.Width, let h = v.Height { s += " · \(w)×\(h)" }
+            if let b = v.BitRate { s += " · " + mbps(Double(b)) }
+            out.append(("Source video", s))
+        }
+        if let a = streams.first(where: { $0.Index == audio }) { out.append(("Source audio", a.DisplayTitle ?? a.Codec ?? "?")) }
+        if isTranscoding, let t = await emby?.sessionInfo()?["TranscodingInfo"] as? [String: Any] {
+            var v = (t["IsVideoDirect"] as? Bool == true) ? "copied" : ((t["VideoCodec"] as? String ?? "?").uppercased())
+            if let w = num(t["Width"]), let h = num(t["Height"]) { v += " · \(Int(w))×\(Int(h))" }
+            out.append(("Server video", v))
+            out.append(("Server audio", (t["IsAudioDirect"] as? Bool == true) ? "copied" : ((t["AudioCodec"] as? String ?? "?").uppercased())))
+            if let b = num(t["Bitrate"]) { out.append(("Stream bitrate", mbps(b))) }
+            if let f = num(t["Framerate"]) { out.append(("Encoder speed", String(format: "%.0f fps", f))) }
+            if let r = t["TranscodeReasons"] as? [String], !r.isEmpty {
+                out.append(("Why transcoding", r.map { $0.replacingOccurrences(of: "NotSupported", with: " not supported") }.joined(separator: ", ")))
+            }
+        }
+        if let it = player?.currentItem {
+            let sz = it.presentationSize
+            if sz.width > 0 { out.append(("Playing", "\(Int(sz.width))×\(Int(sz.height))")) }
+            if let e = it.accessLog()?.events.last {
+                if e.indicatedBitrate > 0 { out.append(("Indicated", mbps(e.indicatedBitrate))) }
+                if e.observedBitrate > 0 { out.append(("Network", mbps(e.observedBitrate))) }
+                out.append(("Dropped / stalls", "\(max(0, e.numberOfDroppedVideoFrames)) / \(max(0, e.numberOfStalls))"))
+            }
+        }
+        return out
     }
 
     /// Tells the server the current position every 10 s (and on pause/play), so it can resume later.
@@ -1756,6 +1922,7 @@ final class PlayerModel: ObservableObject {
         if let o = timeObs { player?.removeTimeObserver(o) }
         timeObs = nil
         debugTimer?.invalidate(); debugTimer = nil; pausedAt = nil
+        if pip?.isPictureInPictureActive == true { pip?.stopPictureInPicture() }
         player?.pause(); player = nil; obs = nil; caption = ""
     }
 }
@@ -1765,7 +1932,7 @@ struct PlayerView: View {
     @StateObject private var model = PlayerModel()
     let req: PlayRequest
 
-    enum Panel { case subtitles, appearance }
+    enum Panel { case subtitles, appearance, chapters }
     @State private var panel: Panel?
     @State private var showUI = true
     @State private var hideTask: Task<Void, Never>?
@@ -1773,6 +1940,12 @@ struct PlayerView: View {
     @State private var scrub: Double = 0
     @State private var episodes: [Item] = []
     @FocusState private var focused: Bool
+    @State private var showInfo = false
+    @State private var infoLines: [(String, String)] = []
+    @State private var hoverX: CGFloat?
+    @State private var sliderW: CGFloat = 1
+    @State private var upNextCancelled = false
+    @State private var upNextLeft = 10
 
     // Subtitle appearance (defaults: normal size, white, drop shadow, transparent, 10% from bottom)
     @AppStorage("subTextSize") private var subTextSize = "normal"
@@ -1864,7 +2037,8 @@ struct PlayerView: View {
         GeometryReader { geo in
             ZStack {
                 Color.black.ignoresSafeArea()
-                if let p = model.player { AVPlayerViewRep(player: p).ignoresSafeArea() }
+                if let p = model.player { AVPlayerViewRep(player: p, onLayer: model.attach).ignoresSafeArea() }
+                if model.pipActive { pipPlaceholder }
                 else if model.error.isEmpty { ProgressView().controlSize(.large) }
 
                 subtitleLayer(geo.size)
@@ -1888,6 +2062,8 @@ struct PlayerView: View {
                     }
                 }
 
+                if showInfo { infoOverlay }
+                cornerCards
                 panelLayer
             }
             .contentShape(Rectangle())
@@ -1902,6 +2078,25 @@ struct PlayerView: View {
         .focusable().focused($focused).focusEffectDisabled()
         .onKeyPress(.space) { model.togglePlay(); poke(); return .handled }
         .onKeyPress("f") { toggleFullScreen(); return .handled }
+        .onKeyPress("i") { showInfo.toggle(); return .handled }
+        .onKeyPress("p") { model.togglePiP(); return .handled }
+        .onKeyPress("c") { if !model.chapterList.isEmpty { panel = panel == .chapters ? nil : .chapters }; return .handled }
+        .task(id: showInfo) {
+            while showInfo && !Task.isCancelled {
+                infoLines = await model.playbackInfo()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        .task(id: showUpNext) {
+            guard showUpNext, autoNext else { upNextLeft = 10; return }
+            upNextLeft = 10
+            while upNextLeft > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                if model.playing { upNextLeft -= 1 }
+            }
+            if showUpNext, let n = nextEp { play(n) }
+        }
         .toolbar(.hidden, for: .windowToolbar)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in isFullScreen = true }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in isFullScreen = false }
@@ -2008,6 +2203,13 @@ struct PlayerView: View {
                 else { model.seek(to: scrub); scrubbing = false }
             }
             .tint(accent).controlSize(.small)
+            .background(GeometryReader { g in
+                Color.clear.onAppear { sliderW = g.size.width }.onChange(of: g.size.width) { _, w in sliderW = w }
+            })
+            .onContinuousHover { ph in
+                if case .active(let p) = ph { hoverX = p.x } else { hoverX = nil }
+            }
+            .overlay(alignment: .bottomLeading) { scrubPreview }
 
             HStack {
                 Text(fmt(scrubbing ? scrub : model.time))
@@ -2031,6 +2233,7 @@ struct PlayerView: View {
                 iconButton("forward.end.fill", size: 18) { if let n = nextEp { play(n) } }
                     .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
                 Spacer()
+                extraButtons
                 iconButton(isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", size: 18) {
                     toggleFullScreen()
                 }.help(isFullScreen ? "Exit full screen (F)" : "Full screen (F)")
@@ -2060,6 +2263,10 @@ struct PlayerView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
         case .appearance:
             HStack { Spacer(); appearancePanel }.transition(.move(edge: .trailing))
+        case .chapters:
+            HStack { Spacer(); chaptersPanel }
+                .padding(.top, 84).padding(.bottom, 190).padding(.trailing, 24)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
         case nil: EmptyView()
         }
     }
@@ -2217,6 +2424,191 @@ struct PlayerView: View {
     }
 }
 
+extension PlayerView {
+    // MARK: Extra controls
+
+    var extraButtons: some View {
+        HStack(spacing: 22) {
+            if !model.chapterList.isEmpty {
+                iconButton("list.bullet.rectangle", size: 18, on: panel == .chapters) {
+                    withAnimation(.easeOut(duration: 0.2)) { panel = panel == .chapters ? nil : .chapters }
+                }.help("Chapters (C)")
+            }
+            iconButton("info.circle", size: 18, on: showInfo) { showInfo.toggle() }.help("Playback info (I)")
+            if model.pipSupported {
+                iconButton(model.pipActive ? "pip.exit" : "pip.enter", size: 18, on: model.pipActive) { model.togglePiP() }
+                    .help("Picture in picture (P)")
+            }
+        }
+    }
+
+    var pipPlaceholder: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "pip").font(.system(size: 44))
+            Text("Playing in picture in picture").font(.system(size: 16, weight: .medium))
+        }.opacity(0.6).allowsHitTesting(false)
+    }
+
+    // MARK: Scrub preview
+
+    @ViewBuilder var scrubPreview: some View {
+        let x: CGFloat? = scrubbing ? CGFloat(scrub / max(model.duration, 1)) * sliderW : hoverX
+        if let x, model.duration > 0 {
+            let t = Double(max(0, min(x, sliderW)) / max(sliderW, 1)) * model.duration
+            let img = model.hasThumbs ? model.thumb(at: t) : nil
+            let w: CGFloat = img == nil ? 64 : 220
+            VStack(spacing: 4) {
+                if let img {
+                    Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+                        .frame(width: w).cornerRadius(6)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.6), lineWidth: 1))
+                }
+                Text(fmt(t)).font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.black.opacity(0.7)))
+            }
+            .frame(width: w)
+            .offset(x: min(max(0, x - w / 2), max(0, sliderW - w)), y: -26)
+            .allowsHitTesting(false)
+        }
+    }
+
+    // MARK: Intro / up next (bottom-right corner)
+
+    var showUpNext: Bool {
+        guard item.isEpisode, nextEp != nil, !upNextCancelled, model.duration > 120 else { return false }
+        let from = model.creditsStart ?? (model.duration - 30)
+        return model.time >= from && model.time < model.duration - 0.5
+    }
+
+    var cornerCards: some View {
+        VStack(alignment: .trailing, spacing: 12) {
+            Spacer()
+            if model.skippedIntro {
+                HStack(spacing: 12) {
+                    Image(systemName: "forward.fill")
+                    Text("Intro skipped").font(.system(size: 15, weight: .semibold))
+                    Button("Watch intro") { model.watchIntro() }.buttonStyle(.plain)
+                        .font(.system(size: 15, weight: .semibold)).foregroundColor(accent)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Capsule().fill(Color.black.opacity(0.75)))
+                .transition(.opacity)
+            } else if model.inIntro {
+                Button { model.skipIntro() } label: {
+                    Text("Skip Intro").font(.system(size: 16, weight: .bold)).foregroundColor(.black)
+                        .padding(.horizontal, 20).padding(.vertical, 11)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
+                }.buttonStyle(.plain)
+            }
+            if showUpNext, let n = nextEp { upNextCard(n) }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.trailing, 34)
+        .padding(.bottom, showUI ? 200 : 40)
+        .animation(.easeOut(duration: 0.2), value: model.skippedIntro)
+    }
+
+    func upNextCard(_ n: Item) -> some View {
+        HStack(spacing: 14) {
+            AsyncImage(url: emby.image(n.Id, "Primary", width: 400)) { img in
+                img.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: { Color.white.opacity(0.1) }
+            .frame(width: 160, height: 90).clipped().cornerRadius(6)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Up next").font(.system(size: 12, weight: .semibold)).foregroundColor(.secondary)
+                Text("S\(n.ParentIndexNumber ?? 0):E\(n.IndexNumber ?? 0) · \(n.Name)")
+                    .font(.system(size: 15, weight: .semibold)).lineLimit(2).frame(maxWidth: 220, alignment: .leading)
+                HStack(spacing: 10) {
+                    Button { play(n) } label: {
+                        Text(autoNext ? "Play now (\(upNextLeft))" : "Play now").font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.black).padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white))
+                    }.buttonStyle(.plain)
+                    Button { upNextCancelled = true } label: {
+                        Text("Cancel").font(.system(size: 14, weight: .semibold))
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.black.opacity(0.8)))
+        .environment(\.colorScheme, .dark)
+        .onTapGesture {}
+    }
+
+    // MARK: Playback info
+
+    var infoOverlay: some View {
+        VStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Playback info").font(.system(size: 13, weight: .bold))
+                    ForEach(Array(infoLines.enumerated()), id: \.offset) { _, l in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(l.0).foregroundColor(.white.opacity(0.6)).frame(width: 120, alignment: .leading)
+                            Text(l.1).frame(maxWidth: 260, alignment: .leading)
+                        }
+                    }
+                }
+                .font(.system(size: 12).monospacedDigit())
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.75)))
+                Spacer()
+            }
+            Spacer()
+        }
+        .padding(.top, 70).padding(.leading, 20)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: Chapters panel
+
+    var chaptersPanel: some View {
+        let list = model.chapterList
+        let cur = list.lastIndex { $0.c.start <= model.time }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionTitle("Chapters")
+                ForEach(Array(list.enumerated()), id: \.offset) { k, e in
+                    chapterRow(e.i, e.c, current: k == cur)
+                }
+            }.padding(.vertical, 12)
+        }
+        .frame(width: 380)
+        .background(.ultraThinMaterial.opacity(0.95))
+        .background(Color(white: 0.15).opacity(0.85))
+        .cornerRadius(14)
+        .environment(\.colorScheme, .dark)
+        .onTapGesture {}
+    }
+
+    func chapterRow(_ i: Int, _ c: Chapter, current: Bool) -> some View {
+        Button { model.seek(to: c.start); panel = nil } label: {
+            HStack(spacing: 14) {
+                Group {
+                    if let tag = c.ImageTag {
+                        AsyncImage(url: emby.chapterImage(item.Id, i, tag)) { img in
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: { Color.white.opacity(0.08) }
+                    } else { Color.white.opacity(0.08) }
+                }
+                .frame(width: 112, height: 63).clipped().cornerRadius(5)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(c.Name ?? "Chapter \(i + 1)").font(.system(size: 15)).lineLimit(2)
+                    Text(fmt(c.start)).font(.system(size: 13).monospacedDigit()).foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            .foregroundColor(current ? accent : .white)
+            .padding(.horizontal, 18).padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }.buttonStyle(PanelRowStyle())
+    }
+}
+
 struct PanelRowStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -2244,22 +2636,37 @@ struct SubShadow: ViewModifier {
 
 /// AppKit video surface with no built-in controls; the SwiftUI overlay draws the UI.
 /// (SwiftUI's VideoPlayer crashes on load on this macOS version.)
-/// AVPlayerView swallows mouse clicks; let them pass through to the SwiftUI layer (click = play/pause).
-final class PassthroughPlayerView: AVPlayerView {
+/// A plain AVPlayerLayer (picture-in-picture needs the layer). Clicks pass through to SwiftUI (click = play/pause).
+final class PlayerLayerView: NSView {
+    let playerLayer = AVPlayerLayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+        playerLayer.videoGravity = .resizeAspect
+        layer?.addSublayer(playerLayer)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        playerLayer.frame = bounds
+        CATransaction.commit()
+    }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 struct AVPlayerViewRep: NSViewRepresentable {
     let player: AVPlayer
-    func makeNSView(context: Context) -> AVPlayerView {
-        let v = PassthroughPlayerView()
-        v.player = player
-        v.controlsStyle = .none
-        v.allowsPictureInPicturePlayback = false
-        v.allowsVideoFrameAnalysis = false
+    var onLayer: (AVPlayerLayer) -> Void = { _ in }
+    func makeNSView(context: Context) -> PlayerLayerView {
+        let v = PlayerLayerView()
+        v.playerLayer.player = player
+        let cb = onLayer, l = v.playerLayer
+        DispatchQueue.main.async { cb(l) }
         return v
     }
-    func updateNSView(_ v: AVPlayerView, context: Context) {
-        if v.player !== player { v.player = player }
+    func updateNSView(_ v: PlayerLayerView, context: Context) {
+        if v.playerLayer.player !== player { v.playerLayer.player = player }
     }
 }
