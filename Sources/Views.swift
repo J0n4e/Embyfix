@@ -271,6 +271,7 @@ struct HomeView: View {
                     else { Color.black }
                 }
                 .navigationDestination(for: Item.self) { DetailView(item: $0) }
+                .navigationDestination(for: PersonRef.self) { PersonView(person: $0) }
             }
             .safeAreaInset(edge: .top, spacing: 0) { SearchBar(query: $query) }
         }
@@ -372,6 +373,79 @@ struct FavoritesView: View {
     func section(_ title: String, _ list: [Item]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.title3.bold())
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+                ForEach(list) { PosterCard(item: $0) }
+            }
+        }
+    }
+}
+
+// MARK: - Person
+
+struct PersonRef: Hashable { let id: String; let name: String }
+
+/// Everything in the user's libraries featuring one actor / director.
+struct PersonView: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
+    let person: PersonRef
+    @State private var items: [Item] = []
+    @State private var bio = ""
+    @State private var loading = true
+    @State private var showBio = false
+
+    var body: some View {
+        let movies = items.filter { !$0.isSeries }
+        let shows = items.filter { $0.isSeries }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                header
+                if !movies.isEmpty { section("Movies", movies) }
+                if !shows.isEmpty { section("Shows", shows) }
+                if loading { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                else if items.isEmpty {
+                    Text("Nothing in your libraries with \(person.name).").foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity).padding(.top, 60)
+                }
+            }
+            .padding(.horizontal, 32).padding(.vertical, 24)
+        }
+        .background(bg)
+        .navigationTitle(person.name)
+        .task {
+            async let list = emby.itemsWithPerson(person.id)
+            async let me = emby.person(person.id)
+            items = await list
+            bio = await me?.Overview ?? ""
+            loading = false
+        }
+    }
+
+    var header: some View {
+        HStack(alignment: .top, spacing: 24) {
+            AsyncImage(url: emby.image(person.id, width: 300)) { img in
+                img.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 50)).foregroundColor(.secondary) }
+            }
+            .frame(width: 140, height: 140).clipShape(Circle())
+            VStack(alignment: .leading, spacing: 8) {
+                Text(person.name).font(.largeTitle.bold())
+                if !loading {
+                    Text("\(items.count) title\(items.count == 1 ? "" : "s") in your libraries").foregroundColor(.secondary)
+                }
+                if !bio.isEmpty {
+                    Text(bio).foregroundColor(.secondary).lineLimit(showBio ? nil : 4).textSelection(.enabled)
+                        .frame(maxWidth: 760, alignment: .leading)
+                    Button(showBio ? "Less" : "More") { showBio.toggle() }.buttonStyle(.plain).foregroundColor(.accentColor)
+                }
+            }
+        }
+    }
+
+    func section(_ title: String, _ list: [Item]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("\(title) (\(list.count))").font(.title3.bold())
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
                 ForEach(list) { PosterCard(item: $0) }
             }
@@ -734,13 +808,15 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: true) {
+            // No scrollbar: the arrows page the row; trackpad / wheel scrolling still works.
+            ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: spacing) {
                     ForEach(ids, id: \.self) { id in content(id).id(id) }
                 }
                 .scrollTargetLayout()
-                .padding(.vertical, 8).padding(.bottom, 8)
+                .padding(.vertical, 8)
             }
+            .scrollIndicators(.never)
             .contentMargins(.horizontal, inset, for: .scrollContent)
             .scrollPosition(id: $pos)
             .background(GeometryReader { g in
@@ -1430,7 +1506,10 @@ struct DetailView: View {
         if !people.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Cast & Crew").font(.title3.bold()).padding(.horizontal, 40)
-                ArrowScrollRow(ids: Array(people.indices), itemWidth: 104) { CastTile(p: people[$0]) }
+                ArrowScrollRow(ids: Array(people.indices), itemWidth: 104) { i in
+                    NavigationLink(value: PersonRef(id: people[i].Id, name: people[i].Name)) { CastTile(p: people[i]) }
+                        .buttonStyle(.plain).help("Show everything with \(people[i].Name)")
+                }
             }
         }
     }
