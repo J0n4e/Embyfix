@@ -64,6 +64,40 @@ struct Chapter: Decodable {
     var isMarker: Bool { (MarkerType ?? "Chapter") != "Chapter" }
 }
 
+/// A client session from /Sessions (only the bits the Now Playing page shows).
+struct ActiveSession: Decodable, Identifiable {
+    let Id: String
+    let UserName: String?
+    let Client: String?
+    let ApplicationVersion: String?
+    let DeviceName: String?
+    let RemoteEndPoint: String?
+    let NowPlayingItem: NowItem?
+    let PlayState: State?
+    let TranscodingInfo: Transcode?
+    var id: String { Id }
+    struct NowItem: Decodable {
+        let Id: String
+        let Name: String
+        let SeriesName: String?
+        let SeriesId: String?
+        let ParentIndexNumber: Int?
+        let IndexNumber: Int?
+        let RunTimeTicks: Int64?
+        let `Type`: String?
+    }
+    struct State: Decodable { let PositionTicks: Int64?; let IsPaused: Bool?; let PlayMethod: String? }
+    struct Transcode: Decodable {
+        let IsVideoDirect: Bool?
+        let IsAudioDirect: Bool?
+        let VideoCodec: String?
+        let AudioCodec: String?
+        let Bitrate: Int?
+        let CompletionPercentage: Double?
+        let TranscodeReasons: [String]?
+    }
+}
+
 /// Audio/subtitle choices remembered per series.
 enum SeriesLang {
     private static let key = "seriesLang"
@@ -283,6 +317,13 @@ final class Emby: ObservableObject {
         guard let (d, _) = try? await URLSession.shared.data(for: r),
               let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
         return arr.first
+    }
+
+    /// All sessions currently playing something (all users for admins, otherwise just yours).
+    func nowPlaying() async -> [ActiveSession] {
+        let all: [ActiveSession]? = try? await get("/Sessions", ["ActiveWithinSeconds": "960"])
+        return (all ?? []).filter { $0.NowPlayingItem != nil }
+            .sorted { ($0.UserName ?? "", $0.Id) < ($1.UserName ?? "", $1.Id) }
     }
 
     /// Thumbnail strip for scrubbing previews (Roku BIF format), if the server has generated one.
@@ -509,6 +550,19 @@ final class Emby: ObservableObject {
     }
 
     /// Movies and series the user marked as favorite, across all libraries.
+    /// Movies and shows in the user's libraries featuring this person, newest first.
+    func itemsWithPerson(_ personId: String) async -> [Item] {
+        let r: ItemList? = try? await get("/Users/\(userId)/Items", ["PersonIds": personId, "Recursive": "true",
+            "IncludeItemTypes": "Movie,Series", "SortBy": "ProductionYear,SortName", "SortOrder": "Descending",
+            "Fields": "Overview,Genres"])
+        return r?.Items ?? []
+    }
+
+    /// A person's own record (name, biography).
+    func person(_ id: String) async -> Item? {
+        try? await get("/Users/\(userId)/Items/\(id)", ["Fields": "Overview"])
+    }
+
     func favorites() async -> [Item] {
         let r: ItemList? = try? await get("/Users/\(userId)/Items", ["Filters": "IsFavorite", "Recursive": "true",
             "IncludeItemTypes": "Movie,Series", "SortBy": "SortName", "SortOrder": "Ascending",
