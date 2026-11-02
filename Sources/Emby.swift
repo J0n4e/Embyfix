@@ -461,6 +461,14 @@ final class Emby: ObservableObject {
         return r?.Items ?? []
     }
 
+    /// Movies and series the user marked as favorite, across all libraries.
+    func favorites() async -> [Item] {
+        let r: ItemList? = try? await get("/Users/\(userId)/Items", ["Filters": "IsFavorite", "Recursive": "true",
+            "IncludeItemTypes": "Movie,Series", "SortBy": "SortName", "SortOrder": "Ascending",
+            "Fields": "Overview,Genres"])
+        return r?.Items ?? []
+    }
+
     func search(_ term: String) async -> [Item] {
         let r: ItemList? = try? await get("/Users/\(userId)/Items", ["SearchTerm": term, "Recursive": "true", "Limit": "60",
             "IncludeItemTypes": "Movie,Series,BoxSet,Video,MusicVideo,Episode", "Fields": "Overview"])
