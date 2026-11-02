@@ -212,6 +212,7 @@ struct HomeView: View {
         NavigationSplitView {
             List(selection: $sel) {
                 Label("Home", systemImage: "house.fill").tag("home")
+                Label("Favorites", systemImage: "heart.fill").tag("favorites")
                 Section("My Media") {
                     ForEach(emby.libs.filter { $0.visible }) { lib in
                         Label(lib.title, systemImage: icon(lib)).tag(lib.id)
@@ -261,6 +262,7 @@ struct HomeView: View {
                 Group {
                     if !query.isEmpty { SearchView(query: query) }
                     else if sel == "home" { HomeContent(reloadToken: reloadToken) }
+                    else if sel == "favorites" { FavoritesView() }
                     else if let lib = emby.libs.first(where: { $0.id == sel }) { LibraryView(lib: lib).id(lib.id) }
                     else { Color.black }
                 }
@@ -322,6 +324,53 @@ struct SearchView: View {
             if Task.isCancelled { return }
             results = await emby.search(query)
             busy = false
+        }
+    }
+}
+
+// MARK: - Favorites
+
+/// Movies and shows marked as favorite, in two sections. Refreshes each time the page is shown,
+/// and hides anything un-favorited from the detail page right away.
+struct FavoritesView: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
+    @State private var items: [Item] = []
+    @State private var loading = true
+
+    var body: some View {
+        let favs = items.filter { emby.isFav($0) }
+        let movies = favs.filter { !$0.isSeries }
+        let shows = favs.filter { $0.isSeries }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("Favorites").font(.title.bold())
+                    if !favs.isEmpty { Text("\(favs.count) Items").foregroundColor(.secondary) }
+                }
+                if !movies.isEmpty { section("Movies", movies) }
+                if !shows.isEmpty { section("Shows", shows) }
+                if loading && items.isEmpty { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                else if favs.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "heart").font(.system(size: 40)).foregroundColor(.secondary)
+                        Text("No favorites yet").font(.headline)
+                        Text("Tap the heart on a movie or show to add it here.").foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity).padding(.top, 80)
+                }
+            }
+            .padding(.horizontal, 32).padding(.vertical, 24)
+        }
+        .background(bg)
+        .onAppear { Task { items = await emby.favorites(); loading = false } }
+    }
+
+    func section(_ title: String, _ list: [Item]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.title3.bold())
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+                ForEach(list) { PosterCard(item: $0) }
+            }
         }
     }
 }
