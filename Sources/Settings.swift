@@ -158,6 +158,7 @@ struct GeneralSettings: View {
                 Text(AppVersion.build.isEmpty ? AppVersion.label : "\(AppVersion.label) (build \(AppVersion.build))")
                     .foregroundColor(.secondary).textSelection(.enabled)
             }
+            SettingRow(label: "Updates") { UpdateRow() }
             SettingRow(label: "Source & releases") {
                 Link("github.com/J0n4e/Embyfix", destination: URL(string: "https://github.com/J0n4e/Embyfix/releases")!)
             }

@@ -26,6 +26,12 @@ struct EmbyFlixApp: App {
                 .tint(Theme.accent(accent))
                 .preferredColorScheme(.dark)
                 .frame(minWidth: 1000, minHeight: 650)
+                .task { await Updater.shared.checkOnLaunch() }
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Task { await Updater.shared.check(interactive: true) } }
+            }
         }
     }
 }
