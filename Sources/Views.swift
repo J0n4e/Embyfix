@@ -28,12 +28,12 @@ extension View {
     func pill(active: Bool = false) -> some View {
         self.font(.callout.weight(.medium))
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(active ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.12)))
+            .background(active ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.1)))
             .clipShape(Capsule())
     }
     func circleButton() -> some View {
-        self.font(.title3).padding(10)
-            .background(Color.white.opacity(0.2)).clipShape(Circle())
+        self.font(.title3).frame(width: 44, height: 44)
+            .background(Color.white.opacity(0.14)).clipShape(Circle())
     }
 }
 
@@ -220,35 +220,40 @@ struct HomeView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
             .safeAreaInset(edge: .top) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("EMBYFLIX").font(.headline.weight(.black)).foregroundStyle(.tint)
-                    Text(AppVersion.label).font(.caption2).foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 8)
-            }
-            .safeAreaInset(edge: .bottom) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint)
+                        Text(AppVersion.label).font(.caption2).foregroundColor(.secondary)
+                    }.padding(.horizontal, 4)
                     Button { emby.switchServer() } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: "server.rack").foregroundStyle(.tint)
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(emby.currentServerName).font(.callout.weight(.semibold)).lineLimit(1)
                                 Text(emby.currentServer?.user.isEmpty == false ? emby.currentServer!.user : (URL(string: emby.server)?.host ?? ""))
-                                    .font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                                    .font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer(minLength: 0)
                             Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundColor(.secondary)
                         }
-                        .padding(8).background(Color.white.opacity(0.07)).cornerRadius(8).contentShape(Rectangle())
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .background(Color.white.opacity(0.05))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                        .cornerRadius(8).contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                     .help("Connected to \(emby.server) — click to switch server")
-                    HStack(spacing: 12) {
-                        Button { showSettings = true } label: { Image(systemName: "gearshape") }
-                            .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
-                        Spacer()
-                        Button("Switch Server") { emby.switchServer() }
-                        Button("Sign Out") { emby.logout() }
-                    }.font(.caption)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    Button { showSettings = true } label: {
+                        Label("Settings", systemImage: "gearshape").font(.callout)
+                            .padding(.horizontal, 8).padding(.vertical, 8).contentShape(Rectangle())
+                    }
+                    .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
+                    Spacer()
+                    Button("Sign Out") { emby.logout() }.font(.caption).foregroundColor(.secondary)
                 }.buttonStyle(.plain).padding(10)
             }
         } detail: {
@@ -277,7 +282,7 @@ struct SearchBar: View {
             Spacer()
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundColor(.secondary)
-                TextField("Search movies, shows…", text: $query).textFieldStyle(.plain)
+                TextField("Search movies, shows, people", text: $query).textFieldStyle(.plain)
                 if !query.isEmpty {
                     Button { query = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
@@ -285,10 +290,10 @@ struct SearchBar: View {
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(Color.white.opacity(0.12)).clipShape(Capsule())
+            .background(Color.white.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(width: 280)
         }
-        .padding(.horizontal, 24).padding(.vertical, 8)
+        .padding(.horizontal, 32).padding(.vertical, 10)
         .background(bg)
     }
 }
@@ -347,12 +352,16 @@ struct HomeContent: View {
             VStack(alignment: .leading, spacing: 28) {
                 if !hero.isEmpty { Hero(items: hero) }
                 ForEach(rows) { row in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(row.title).font(.title3.bold()).padding(.leading, 40)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(row.title).font(.title3.bold()).padding(.leading, 32)
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: 10) {
-                                ForEach(row.items) { PosterCard(item: $0) }
-                            }.padding(.horizontal, 40)
+                            LazyHStack(alignment: .top, spacing: 14) {
+                                if row.title == "Continue Watching" {
+                                    ForEach(row.items) { ResumeCard(item: $0) }
+                                } else {
+                                    ForEach(row.items) { PosterCard(item: $0) }
+                                }
+                            }.padding(.horizontal, 32).padding(.vertical, 6)
                         }
                     }
                 }
@@ -366,46 +375,69 @@ struct HomeContent: View {
 
 struct Hero: View {
     @EnvironmentObject var emby: Emby
-    @Environment(\.appBG) var bg
     let items: [Item]
     @State private var index = 0
+
+    func meta(_ item: Item) -> [String] {
+        var m: [String] = []
+        if let y = item.ProductionYear { m.append(String(y)) }
+        if let t = item.RunTimeTicks, t > 0 { m.append(runtimeText(t)) }
+        if let g = item.Genres?.first { m.append(g) }
+        return m
+    }
+
     var body: some View {
         let item = items[index % items.count]
         ZStack(alignment: .bottomLeading) {
-            Backdrop(id: item.backdropId ?? item.Id).frame(height: 460).clipped()
+            Backdrop(id: item.backdropId ?? item.Id).frame(height: 440).frame(maxWidth: .infinity).clipped()
                 .id("b" + item.id).transition(.opacity)
-            LinearGradient(colors: [Color.clear, bg], startPoint: .center, endPoint: .bottom)
-            VStack(alignment: .leading, spacing: 10) {
-                Text(item.heroTitle).font(.system(size: 40, weight: .heavy))
+            VStack(alignment: .leading, spacing: 14) {
+                Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2)
                 if item.SeriesName != nil {
                     Text("S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)  \(item.Name)")
-                        .font(.headline).foregroundColor(.secondary)
+                        .font(.headline).foregroundColor(.white.opacity(0.8))
                 }
-                Text(item.Overview ?? "").lineLimit(3).frame(maxWidth: 520, alignment: .leading)
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    ForEach(meta(item), id: \.self) { Text($0) }
+                    if let r = item.CommunityRating {
+                        HStack(spacing: 3) { Image(systemName: "star.fill"); Text(String(format: "%.1f", r)) }
+                            .foregroundColor(.yellow)
+                    }
+                }.font(.subheadline).foregroundColor(.white.opacity(0.85))
+                Text(item.Overview ?? "").font(.body).lineLimit(3).frame(maxWidth: 620, alignment: .leading)
+                    .foregroundColor(.white.opacity(0.9))
+                HStack(spacing: 12) {
                     Button { Task { await emby.play(item) } } label: {
-                        Label("Play", systemImage: "play.fill").bold()
-                            .padding(.horizontal, 22).padding(.vertical, 8)
-                            .background(.white).foregroundColor(.black).cornerRadius(4)
+                        Label("Play", systemImage: "play.fill").font(.system(size: 16, weight: .bold))
+                            .padding(.horizontal, 26).frame(height: 44)
+                            .background(.white).foregroundColor(.black).cornerRadius(6)
                     }.buttonStyle(.plain)
                     NavigationLink(value: item) {
-                        Label("More Info", systemImage: "info.circle").bold()
-                            .padding(.horizontal, 22).padding(.vertical, 8)
-                            .background(Color.gray.opacity(0.5)).cornerRadius(4)
+                        Label("More Info", systemImage: "info.circle").font(.system(size: 16, weight: .bold))
+                            .padding(.horizontal, 22).frame(height: 44)
+                            .background(Color.gray.opacity(0.55)).foregroundColor(.white).cornerRadius(6)
                     }.buttonStyle(.plain)
+                    Spacer()
+                    HStack(spacing: 6) {
+                        ForEach(items.indices, id: \.self) { i in
+                            let on = i == index % items.count
+                            Capsule().fill(on ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.4)))
+                                .frame(width: on ? 22 : 8, height: 4)
+                                .contentShape(Rectangle().inset(by: -6))
+                                .onTapGesture { withAnimation(.easeInOut(duration: 0.8)) { index = i } }
+                        }
+                    }
                 }
-            }.padding(40).id("t" + item.id).transition(.opacity)
+            }
+            .padding(.horizontal, 44).padding(.vertical, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.black.opacity(0.55))
+            .id("t" + item.id).transition(.opacity)
         }
-        .frame(height: 460)
-        .overlay(alignment: .bottomTrailing) {
-            HStack(spacing: 6) {
-                ForEach(items.indices, id: \.self) { i in
-                    Circle().fill(i == index % items.count ? Color.white : Color.white.opacity(0.35))
-                        .frame(width: 8, height: 8)
-                        .onTapGesture { withAnimation(.easeInOut(duration: 0.8)) { index = i } }
-                }
-            }.padding(40)
-        }
+        .frame(height: 440)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 32)
+        .foregroundColor(.white)
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
@@ -413,6 +445,62 @@ struct Hero: View {
                 withAnimation(.easeInOut(duration: 1.0)) { index += 1 }
             }
         }
+    }
+}
+
+/// Landscape card for the Continue Watching row: still image, accent progress bar, time left.
+struct ResumeCard: View {
+    @EnvironmentObject var emby: Emby
+    let item: Item
+    @State private var hover = false
+
+    var progress: Double { min(1, max(0, (item.UserData?.PlayedPercentage ?? 0) / 100)) }
+    var timeLeft: String? {
+        guard let total = item.RunTimeTicks, total > 0 else { return nil }
+        let left = max(0, total - (item.UserData?.PlaybackPositionTicks ?? 0))
+        return runtimeText(left) + " left"
+    }
+    var subtitle: String? {
+        if item.isEpisode { return "S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)" + (timeLeft.map { " · " + $0 } ?? "") }
+        return timeLeft
+    }
+    /// Episodes have a landscape primary image; movies use their backdrop.
+    var imageURL: URL? {
+        item.isEpisode ? emby.image(item.Id, width: 520) : emby.image(item.backdropId ?? item.Id, "Backdrop", width: 520)
+    }
+
+    var body: some View {
+        Button { Task { await emby.play(item) } } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                AsyncImage(url: imageURL) { p in
+                    p.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
+                }
+                .frame(width: 260, height: 146).clipped()
+                .overlay(alignment: .bottom) {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(Color.white.opacity(0.25))
+                            Rectangle().fill(.tint).frame(width: g.size.width * progress)
+                        }
+                    }.frame(height: 4)
+                }
+                .overlay {
+                    if hover {
+                        Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundColor(.white)
+                            .shadow(radius: 6)
+                    }
+                }
+                .cornerRadius(8)
+                Text(item.heroTitle).font(.callout.weight(.semibold)).lineLimit(1)
+                if let subtitle { Text(subtitle).font(.caption).foregroundColor(.secondary).lineLimit(1) }
+            }
+            .frame(width: 260, alignment: .leading)
+            .contentShape(Rectangle())
+            .onHover { hover = $0 }
+            .help(item.isEpisode ? "\(item.heroTitle) — \(item.Name)" : item.Name)
+        }.buttonStyle(.plain)
     }
 }
 
@@ -433,24 +521,36 @@ struct PosterCard: View {
     var body: some View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
-            ZStack(alignment: .topTrailing) {
-                AsyncImage(url: emby.image(item.posterId, width: 360)) { p in
-                    p.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    ZStack { Color(white: 0.15); Text(item.Name).font(.caption).padding(6) }
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: emby.image(item.posterId, width: 360)) { p in
+                        p.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        ZStack { Color(white: 0.15); Text(item.Name).font(.caption).padding(6) }
+                    }
+                    .frame(width: 150, height: 225).clipped()
+                    .opacity(played ? 0.6 : 1)
+                    WatchBadge(item: item, played: played).padding(8)
                 }
-                .frame(width: 150, height: 225).clipped()
-                .opacity(played ? 0.6 : 1)
-                WatchBadge(item: item, played: played).padding(6)
-            }
-            .overlay(alignment: .bottom) {
-                if let pct = item.UserData?.PlayedPercentage, pct > 0, pct < 100, !played {
-                    ProgressView(value: pct / 100).padding(.horizontal, 6).padding(.bottom, 6)
+                .overlay(alignment: .topLeading) {
+                    if emby.isFav(item) {
+                        Image(systemName: "heart.fill").font(.system(size: 14)).foregroundStyle(.tint)
+                            .shadow(color: .black.opacity(0.6), radius: 3).padding(8)
+                    }
                 }
+                .overlay(alignment: .bottom) {
+                    if let pct = item.UserData?.PlayedPercentage, pct > 0, pct < 100, !played {
+                        ProgressView(value: pct / 100).padding(.horizontal, 8).padding(.bottom, 8)
+                    }
+                }
+                .cornerRadius(8)
+                .scaleEffect(hover ? 1.06 : 1).shadow(radius: hover ? 12 : 0)
+                .animation(.easeOut(duration: 0.15), value: hover)
+                Text(item.Name).font(.callout.weight(.semibold)).lineLimit(1)
+                Text(item.ProductionYear.map { String($0) } ?? " ").font(.caption).foregroundColor(.secondary)
             }
-            .cornerRadius(4)
-            .scaleEffect(hover ? 1.12 : 1).shadow(radius: hover ? 12 : 0)
-            .animation(.easeOut(duration: 0.15), value: hover)
+            .frame(width: 150, alignment: .leading)
+            .contentShape(Rectangle())
             .onHover { hover = $0 }
             .zIndex(hover ? 1 : 0)
             .help(item.Name)
@@ -784,16 +884,16 @@ struct CastTile: View {
     @EnvironmentObject var emby: Emby
     let p: Full.Person
     var body: some View {
-        VStack(spacing: 4) {
-            AsyncImage(url: emby.image(p.Id, width: 300)) { img in
+        VStack(spacing: 6) {
+            AsyncImage(url: emby.image(p.Id, width: 240)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
-                ZStack { Color(white: 0.15); Image(systemName: "person.fill").foregroundColor(.secondary) }
+                ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 30)).foregroundColor(.secondary) }
             }
-            .frame(width: 130, height: 175).clipped().cornerRadius(6)
-            Text(p.Name).font(.caption).lineLimit(1)
+            .frame(width: 88, height: 88).clipShape(Circle())
+            Text(p.Name).font(.caption.weight(.semibold)).lineLimit(1)
             Text(p.Role ?? p.`Type` ?? "").font(.caption2).foregroundColor(.secondary).lineLimit(1)
-        }.frame(width: 130)
+        }.frame(width: 104).multilineTextAlignment(.center)
     }
 }
 
@@ -900,10 +1000,10 @@ struct DetailView: View {
             AsyncImage(url: emby.image(item.id, width: 500)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { ZStack { Color(white: 0.15); Text(item.Name).padding() } }
-            .frame(width: item.isEpisode ? 320 : 190, height: item.isEpisode ? 180 : 285)
-            .clipped().cornerRadius(6).shadow(radius: 10)
+            .frame(width: item.isEpisode ? 320 : 220, height: item.isEpisode ? 180 : 330)
+            .clipped().cornerRadius(10).shadow(color: .black.opacity(0.5), radius: 16, y: 8)
             VStack(alignment: .leading, spacing: 14) {
-                Text(item.Name).font(.system(size: 34, weight: .bold))
+                Text(item.Name).font(.system(size: 46, weight: .black))
                 meta
                 if !simple { streamsRow }
                 buttons
@@ -983,7 +1083,7 @@ struct DetailView: View {
         return HStack(spacing: 10) {
             Button { playNow() } label: {
                 Label(playLabel, systemImage: "play.fill").bold()
-                    .padding(.horizontal, 22).padding(.vertical, 9)
+                    .padding(.horizontal, 24).frame(height: 44)
                     .background(.white).foregroundColor(.black).clipShape(Capsule())
             }.buttonStyle(.plain)
             if let t = playTarget, emby.resumeAt(t) > 0 {
@@ -1215,7 +1315,7 @@ struct DetailView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Cast & Crew").font(.title3.bold()).padding(.horizontal, 40)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(alignment: .top, spacing: 14) { ForEach(people) { CastTile(p: $0) } }.padding(.horizontal, 40)
+                    LazyHStack(alignment: .top, spacing: 18) { ForEach(people) { CastTile(p: $0) } }.padding(.horizontal, 40)
                 }
             }
         }
@@ -1575,6 +1675,8 @@ struct PlayerView: View {
     @AppStorage("skipSeconds") private var skipSecs = 10
     @AppStorage("autoNext") private var autoNext = true
     @AppStorage("clickToPause") private var clickToPause = true
+    @AppStorage("accent") private var accentName = "red"
+    var accent: Color { Theme.accent(accentName) }
     @State private var isFullScreen = false
     @State private var enteredFullScreen = false
 
@@ -1799,7 +1901,7 @@ struct PlayerView: View {
                 if editing { scrub = model.time; scrubbing = true }
                 else { model.seek(to: scrub); scrubbing = false }
             }
-            .tint(.white).controlSize(.small)
+            .tint(accent).controlSize(.small)
 
             HStack {
                 Text(fmt(scrubbing ? scrub : model.time))
@@ -1812,8 +1914,13 @@ struct PlayerView: View {
                 iconButton("backward.end.fill", size: 18) { if let p = prevEp { play(p) } else { model.seek(to: 0) } }
                     .help("Previous")
                 iconButton("gobackward.\(skipSecs)", size: 22) { model.skip(-Double(skipSecs)) }.help("Back \(skipSecs) seconds")
-                iconButton(model.playing ? "pause.fill" : "play.fill", size: 26) { model.togglePlay() }
-                    .help(model.playing ? "Pause" : "Play")
+                Button { model.togglePlay(); poke() } label: {
+                    Image(systemName: model.playing ? "pause.fill" : "play.fill").font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.black)
+                        .frame(width: 56, height: 56)
+                        .background(Circle().fill(Color.white))
+                        .contentShape(Circle())
+                }.buttonStyle(.plain).help(model.playing ? "Pause (Space)" : "Play (Space)")
                 iconButton("goforward.\(skipSecs)", size: 22) { model.skip(Double(skipSecs)) }.help("Forward \(skipSecs) seconds")
                 iconButton("forward.end.fill", size: 18) { if let n = nextEp { play(n) } }
                     .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
@@ -1831,7 +1938,8 @@ struct PlayerView: View {
         Button { action(); poke() } label: {
             Image(systemName: name).font(.system(size: size, weight: .medium))
                 .frame(width: size + 12, height: size + 12)
-                .foregroundColor(on ? .accentColor : .white)
+                .foregroundColor(on ? accent : .white)
+                .background(Circle().fill(Color.white.opacity(on ? 0.12 : 0)))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain)
     }
@@ -1855,8 +1963,8 @@ struct PlayerView: View {
             HStack {
                 Spacer()
                 VStack(alignment: .leading, spacing: 0) { c() }
-                    .padding(.vertical, 12)
-                    .frame(width: 330)
+                    .padding(.vertical, 14)
+                    .frame(width: 340)
                     .background(.ultraThinMaterial.opacity(0.95))
                     .background(Color(white: 0.15).opacity(0.85))
                     .cornerRadius(14)
@@ -1883,6 +1991,7 @@ struct PlayerView: View {
                 Spacer()
                 if checked { Image(systemName: "checkmark").font(.system(size: 15, weight: .semibold)) }
             }
+            .foregroundColor(checked ? accent : .white)
             .padding(.horizontal, 22).padding(.vertical, 11)
             .contentShape(Rectangle())
         }.buttonStyle(PanelRowStyle())

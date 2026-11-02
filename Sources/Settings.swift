@@ -30,6 +30,7 @@ struct SettingsView: View {
                 Text("Settings").font(.title2.bold())
                 Spacer()
                 Button("Done") { emby.saveLibs(); onDone(); dismiss() }.keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
             }.padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
             HStack(spacing: 0) {
@@ -119,10 +120,28 @@ struct GeneralSettings: View {
         HStack(spacing: 14) {
             ForEach(list, id: \.0) { name, color in
                 Button { selection.wrappedValue = name } label: {
-                    Circle().fill(color).frame(width: 30, height: 30)
+                    Circle().fill(color).frame(width: 40, height: 40)
                         .overlay(Circle().stroke(Color.white, lineWidth: selection.wrappedValue == name ? 3 : 0))
                         .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                        .frame(width: 44, height: 44).contentShape(Circle())
                 }.buttonStyle(.plain).help(name.capitalized)
+            }
+        }
+    }
+
+    /// Background picker: labelled tiles, the selected one ringed in the accent color.
+    func bgTiles(selection: Binding<String>) -> some View {
+        HStack(spacing: 12) {
+            ForEach(Theme.backgrounds, id: \.0) { name, color in
+                let on = selection.wrappedValue == name
+                Button { selection.wrappedValue = name } label: {
+                    VStack(spacing: 6) {
+                        RoundedRectangle(cornerRadius: 8).fill(color).frame(width: 64, height: 44)
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .stroke(on ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.15)), lineWidth: on ? 3 : 1))
+                        Text(name.capitalized).font(.caption).foregroundColor(on ? .primary : .secondary)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain)
             }
         }
     }
@@ -132,7 +151,7 @@ struct GeneralSettings: View {
             Text("Accent color").foregroundColor(.secondary)
             swatches(Theme.accents, selection: $accent)
             Text("Background").foregroundColor(.secondary).padding(.top, 4)
-            swatches(Theme.backgrounds, selection: $bg)
+            bgTiles(selection: $bg)
         }
         SettingsGroup(title: "About") {
             SettingRow(label: "Version") {
