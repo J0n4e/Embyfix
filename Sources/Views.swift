@@ -661,6 +661,73 @@ func timeString(_ t: Double) -> String {
     return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
 }
 
+/// Horizontal row with ‹ › buttons that page through items that don't fit on screen.
+/// The buttons only show when there is more to see in that direction; trackpad scrolling still works.
+struct ArrowScrollRow<ID: Hashable, Content: View>: View {
+    let ids: [ID]
+    let itemWidth: CGFloat
+    var spacing: CGFloat = 18
+    var inset: CGFloat = 40
+    @ViewBuilder let content: (ID) -> Content
+    @State private var pos: ID?
+    @State private var width: CGFloat = 0
+
+    /// How many items fit in the visible width.
+    var visible: Int { max(1, Int((width - inset * 2 + spacing) / (itemWidth + spacing))) }
+    /// Index of the first visible item.
+    var index: Int { pos.flatMap { ids.firstIndex(of: $0) } ?? 0 }
+    var canGoBack: Bool { index > 0 }
+    var canGoForward: Bool { index + visible < ids.count }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: true) {
+                HStack(alignment: .top, spacing: spacing) {
+                    ForEach(ids, id: \.self) { id in content(id).id(id) }
+                }
+                .scrollTargetLayout()
+                .padding(.vertical, 4).padding(.bottom, 10)
+            }
+            .contentMargins(.horizontal, inset, for: .scrollContent)
+            .scrollPosition(id: $pos)
+            .background(GeometryReader { g in
+                Color.clear
+                    .onAppear { width = g.size.width }
+                    .onChange(of: g.size.width) { width = g.size.width }
+            })
+            .overlay(alignment: .leading) {
+                if canGoBack { arrow("chevron.left", help: "Previous") { page(-1, proxy) }.padding(.leading, 6) }
+            }
+            .overlay(alignment: .trailing) {
+                if canGoForward { arrow("chevron.right", help: "Next") { page(1, proxy) }.padding(.trailing, 6) }
+            }
+            .animation(.easeOut(duration: 0.15), value: canGoBack)
+            .animation(.easeOut(duration: 0.15), value: canGoForward)
+        }
+    }
+
+    func page(_ dir: Int, _ proxy: ScrollViewProxy) {
+        guard !ids.isEmpty else { return }
+        let step = max(1, visible - 1)   // keep one item from the previous page in view
+        let target = min(max(0, index + dir * step), max(0, ids.count - visible))
+        withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(ids[target], anchor: .leading) }
+        pos = ids[target]
+    }
+
+    func arrow(_ icon: String, help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 18, weight: .bold)).foregroundColor(.white)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Color.black.opacity(0.7)))
+                .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 1))
+                .shadow(color: .black.opacity(0.5), radius: 6)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain).help(help)
+        .transition(.opacity)
+    }
+}
+
 // MARK: - Library page (header, tabs, sort, filter; choices are remembered per library)
 
 struct LibraryView: View {
@@ -1188,11 +1255,7 @@ struct DetailView: View {
     var seasonRow: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Seasons").font(.title3.bold()).padding(.horizontal, 40)
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 18) {
-                    ForEach(seasonNumbers, id: \.self) { n in seasonPoster(n) }
-                }.padding(.horizontal, 40).padding(.vertical, 4)
-            }
+            ArrowScrollRow(ids: seasonNumbers, itemWidth: 170) { n in seasonPoster(n) }
         }
     }
 
