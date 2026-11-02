@@ -211,7 +211,7 @@ struct UpdateRow: View {
                     Button("Check for Updates") { Task { await up.check(interactive: true) } }
                         .disabled(up.status == .checking || up.status == .installing)
                 }
-                if up.status == .checking || up.status == .installing { ProgressView().controlSize(.small) }
+                if up.status == .checking || up.status == .installing { Spinner().controlSize(.small) }
                 Text(statusText).foregroundColor(.secondary).lineLimit(2)
             }
             Toggle("Check for updates automatically", isOn: $auto)

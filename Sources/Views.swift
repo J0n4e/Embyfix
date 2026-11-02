@@ -1,3 +1,4 @@
+import IOKit.pwr_mgt
 import SwiftUI
 import AVKit
 
@@ -64,6 +65,7 @@ struct RootView: View {
                 PlayerView(req: req).id(req.id).zIndex(10)
             }
         }
+        .onChange(of: emby.playing?.id) { _, id in PlaybackFlag.shared.active = id != nil }
     }
 }
 
@@ -109,7 +111,7 @@ struct LoginView: View {
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
-            if busy { ProgressView().controlSize(.small) }
+            if busy { Spinner().controlSize(.small) }
         }
     }
 
@@ -156,7 +158,7 @@ struct LoginView: View {
             SecureField("Password", text: $pw).focused($focus, equals: .pw).onSubmit(go)
             Button(action: go) {
                 HStack {
-                    if busy { ProgressView().controlSize(.small) }
+                    if busy { Spinner().controlSize(.small) }
                     Text("Sign In").bold()
                 }.frame(maxWidth: .infinity).padding(8)
             }.buttonStyle(.borderedProminent).disabled(busy || server.isEmpty || user.isEmpty)
@@ -330,7 +332,7 @@ struct SearchView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
                     ForEach(results) { PosterCard(item: $0) }
                 }
-                if busy { ProgressView() }
+                if busy { Spinner() }
                 else if results.isEmpty { Text("No results").foregroundColor(.secondary) }
             }.padding(40)
         }
@@ -367,7 +369,7 @@ struct FavoritesView: View {
                 }
                 if !movies.isEmpty { section("Movies", movies) }
                 if !shows.isEmpty { section("Shows", shows) }
-                if loading && items.isEmpty { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                if loading && items.isEmpty { Spinner().frame(maxWidth: .infinity).padding(60) }
                 else if favs.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "heart").font(.system(size: 40)).foregroundColor(.secondary)
@@ -407,7 +409,7 @@ struct NowPlayingView: View {
                     Text("Now Playing").font(.title.bold())
                     if !sessions.isEmpty { Text("\(sessions.count) active").foregroundColor(.secondary) }
                 }
-                if !loaded { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                if !loaded { Spinner().frame(maxWidth: .infinity).padding(60) }
                 else if sessions.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "play.slash").font(.system(size: 40)).foregroundColor(.secondary)
@@ -524,7 +526,7 @@ struct PersonView: View {
                 header
                 if !movies.isEmpty { section("Movies", movies) }
                 if !shows.isEmpty { section("Shows", shows) }
-                if loading { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
                 else if items.isEmpty {
                     Text("Nothing in your libraries with \(person.name).").foregroundColor(.secondary)
                         .frame(maxWidth: .infinity).padding(.top, 60)
@@ -614,7 +616,7 @@ struct HomeContent: View {
                         }
                     }
                 }
-                if loading { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
             }.padding(.bottom, 40)
         }
         .background(bg)
@@ -976,9 +978,9 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
 
     func page(_ dir: Int, _ proxy: ScrollViewProxy) {
         guard !ids.isEmpty else { return }
-        let step = max(1, visible - 1)   // keep one item from the previous page in view
-        let target = min(max(0, index + dir * step), max(0, ids.count - visible))
-        withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(ids[target], anchor: .leading) }
+        // One item per click, with a smooth slide
+        let target = min(max(0, index + dir), max(0, ids.count - visible))
+        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(ids[target], anchor: .leading) }
         pos = ids[target]
     }
 
@@ -1174,7 +1176,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            if loading { ProgressView() }
+            if loading { Spinner() }
             else if items.isEmpty { Text("Nothing here.").foregroundColor(.secondary).padding(40) }
         }
     }
@@ -2279,8 +2281,8 @@ struct PlayerView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 if let p = model.player { AVPlayerViewRep(player: p, onLayer: model.attach).ignoresSafeArea() }
+                else if model.error.isEmpty { Spinner(inPlayer: true).controlSize(.large) }
                 if model.pipActive { pipPlaceholder }
-                else if model.error.isEmpty { ProgressView().controlSize(.large) }
 
                 subtitleLayer(geo.size)
 
@@ -2320,6 +2322,9 @@ struct PlayerView: View {
         .onKeyPress(.space) { model.togglePlay(); poke(); return .handled }
         .onKeyPress("f") { toggleFullScreen(); return .handled }
         .onKeyPress("i") { showInfo.toggle(); return .handled }
+        // No screen saver / display sleep while a full-screen video is playing
+        .onChange(of: model.playing && isFullScreen) { _, on in KeepAwake.set(on) }
+        .onDisappear { KeepAwake.set(false) }
         .onKeyPress("p") { model.togglePiP(); return .handled }
         .onKeyPress("c") { if !model.chapterList.isEmpty { panel = panel == .chapters ? nil : .chapters }; return .handled }
         .task(id: showInfo) {
@@ -2367,7 +2372,7 @@ struct PlayerView: View {
             VStack {
                 Spacer()
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                    Spinner(inPlayer: true).controlSize(.small)
                     Text("Loading subtitles…").font(.system(size: 14, weight: .medium))
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
@@ -2909,5 +2914,56 @@ struct AVPlayerViewRep: NSViewRepresentable {
     }
     func updateNSView(_ v: PlayerLayerView, context: Context) {
         if v.playerLayer.player !== player { v.playerLayer.player = player }
+    }
+}
+
+/// Loading spinner drawn by SwiftUI. The system ProgressView is an AppKit view that always draws on top,
+/// so a spinner on a page behind the player showed through the video.
+struct Spinner: View {
+    var inPlayer = false
+    @ObservedObject private var playback = PlaybackFlag.shared
+    @Environment(\.controlSize) private var size
+    var d: CGFloat { size == .small || size == .mini ? 16 : size == .large ? 40 : 26 }
+    var body: some View {
+        // Pages behind the player live in separate AppKit hosting views, so their spinners can show
+        // through the video: don't draw them at all while something is playing.
+        if playback.active && !inPlayer { EmptyView() } else {
+            wheel
+        }
+    }
+
+    /// Rotation comes from the clock, not a repeatForever animation: such an animation also drives the
+    /// view's removal, so the spinner never finished disappearing and stayed over the playing video.
+    var wheel: some View {
+        TimelineView(.animation) { ctx in
+            let angle = ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360
+            Circle()
+                .trim(from: 0.08, to: 0.8)
+                .stroke(Color.secondary, style: StrokeStyle(lineWidth: max(2, d / 9), lineCap: .round))
+                .frame(width: d, height: d)
+                .rotationEffect(.degrees(angle))
+        }
+    }
+}
+
+/// True while the video player is on screen.
+final class PlaybackFlag: ObservableObject {
+    static let shared = PlaybackFlag()
+    @Published var active = false
+}
+
+
+/// Holds an IOKit assertion that stops the screen saver and display sleep.
+enum KeepAwake {
+    private static var id: IOPMAssertionID = 0
+    static func set(_ on: Bool) {
+        if on, id == 0 {
+            IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+                                        IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                        "EmbyFlix is playing a video in full screen" as CFString, &id)
+        } else if !on, id != 0 {
+            IOPMAssertionRelease(id)
+            id = 0
+        }
     }
 }
