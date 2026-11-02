@@ -509,6 +509,19 @@ final class Emby: ObservableObject {
     }
 
     /// Movies and series the user marked as favorite, across all libraries.
+    /// Movies and shows in the user's libraries featuring this person, newest first.
+    func itemsWithPerson(_ personId: String) async -> [Item] {
+        let r: ItemList? = try? await get("/Users/\(userId)/Items", ["PersonIds": personId, "Recursive": "true",
+            "IncludeItemTypes": "Movie,Series", "SortBy": "ProductionYear,SortName", "SortOrder": "Descending",
+            "Fields": "Overview,Genres"])
+        return r?.Items ?? []
+    }
+
+    /// A person's own record (name, biography).
+    func person(_ id: String) async -> Item? {
+        try? await get("/Users/\(userId)/Items/\(id)", ["Fields": "Overview"])
+    }
+
     func favorites() async -> [Item] {
         let r: ItemList? = try? await get("/Users/\(userId)/Items", ["Filters": "IsFavorite", "Recursive": "true",
             "IncludeItemTypes": "Movie,Series", "SortBy": "SortName", "SortOrder": "Ascending",
