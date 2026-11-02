@@ -196,6 +196,7 @@ struct LoginView: View {
 struct HomeView: View {
     @EnvironmentObject var emby: Emby
     @State private var sel = "home"
+    @State private var activeCount = 0
     @State private var path = NavigationPath()
     @State private var query = ""
     @State private var showSettings = false
@@ -217,6 +218,9 @@ struct HomeView: View {
             List(selection: $sel) {
                 Label("Home", systemImage: "house.fill").tag("home")
                 Label("Favorites", systemImage: "heart.fill").tag("favorites")
+                Label("Now Playing", systemImage: "dot.radiowaves.left.and.right")
+                    .badge(activeCount)
+                    .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
                 Section("My Media") {
                     ForEach(emby.libs.filter { $0.visible }) { lib in
                         Label(lib.title, systemImage: icon(lib)).tag(lib.id)
@@ -267,6 +271,7 @@ struct HomeView: View {
                     if !query.isEmpty { SearchView(query: query) }
                     else if sel == "home" { HomeContent(reloadToken: reloadToken) }
                     else if sel == "favorites" { FavoritesView() }
+                    else if sel == "nowplaying" { NowPlayingView() }
                     else if let lib = emby.libs.first(where: { $0.id == sel }) { LibraryView(lib: lib).id(lib.id) }
                     else { Color.black }
                 }
@@ -276,6 +281,13 @@ struct HomeView: View {
             .safeAreaInset(edge: .top, spacing: 0) { SearchBar(query: $query) }
         }
         .task { await emby.loadLibs() }
+        .task {
+            // Keep the sidebar's Now Playing count fresh
+            while !Task.isCancelled {
+                activeCount = await emby.nowPlaying().count
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
         .onChange(of: sel) { path = NavigationPath(); query = "" }
         .sheet(isPresented: $showSettings) { SettingsView { reloadToken += 1 } }
     }
@@ -377,6 +389,116 @@ struct FavoritesView: View {
                 ForEach(list) { PosterCard(item: $0) }
             }
         }
+    }
+}
+
+// MARK: - Now Playing (active sessions on the server)
+
+struct NowPlayingView: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
+    @State private var sessions: [ActiveSession] = []
+    @State private var loaded = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("Now Playing").font(.title.bold())
+                    if !sessions.isEmpty { Text("\(sessions.count) active").foregroundColor(.secondary) }
+                }
+                if !loaded { ProgressView().frame(maxWidth: .infinity).padding(60) }
+                else if sessions.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "play.slash").font(.system(size: 40)).foregroundColor(.secondary)
+                        Text("Nothing is playing right now").font(.headline)
+                    }.frame(maxWidth: .infinity).padding(.top, 80)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 18)], alignment: .leading, spacing: 18) {
+                        ForEach(sessions) { SessionCard(s: $0) }
+                    }
+                }
+            }
+            .padding(.horizontal, 32).padding(.vertical, 24)
+        }
+        .background(bg)
+        .task {
+            while !Task.isCancelled {
+                sessions = await emby.nowPlaying()
+                loaded = true
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+}
+
+struct SessionCard: View {
+    @EnvironmentObject var emby: Emby
+    let s: ActiveSession
+
+    func clock(_ ticks: Int64?) -> String { timeString(Double(ticks ?? 0) / 10_000_000) }
+
+    var icon: String {
+        let c = (s.Client ?? "").lowercased() + " " + (s.DeviceName ?? "").lowercased()
+        if c.contains("embyflix") || c.contains("mac") { return "desktopcomputer" }
+        if c.contains("web") || c.contains("chrome") || c.contains("firefox") || c.contains("safari") { return "globe" }
+        if c.contains("iphone") || c.contains("ios") || c.contains("android") { return "iphone" }
+        if c.contains("tv") || c.contains("roku") || c.contains("kodi") { return "tv" }
+        return "display"
+    }
+
+    var body: some View {
+        let it = s.NowPlayingItem!
+        let pos = Double(s.PlayState?.PositionTicks ?? 0), dur = Double(it.RunTimeTicks ?? 0)
+        let transcoding = s.PlayState?.PlayMethod == "Transcode"
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                AsyncImage(url: emby.image(it.SeriesId ?? it.Id, width: 160)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: { Color.white.opacity(0.08) }
+                .frame(width: 64, height: 96).clipped().cornerRadius(4)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(it.SeriesName ?? it.Name).font(.headline).lineLimit(1)
+                    if it.SeriesName != nil {
+                        Text("S\(it.ParentIndexNumber ?? 0):E\(it.IndexNumber ?? 0) - \(it.Name)")
+                            .foregroundColor(.secondary).lineLimit(1)
+                    }
+                    HStack(spacing: 6) {
+                        if s.PlayState?.IsPaused == true { Image(systemName: "pause.fill").font(.caption) }
+                        Text("\(clock(s.PlayState?.PositionTicks)) / \(clock(it.RunTimeTicks))").monospacedDigit()
+                    }.foregroundColor(.secondary)
+                    Text(transcoding ? "Transcode" : "Direct play")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(transcoding ? Color.orange.opacity(0.25) : Color.green.opacity(0.25)))
+                        .help(s.TranscodingInfo?.TranscodeReasons?.joined(separator: ", ") ?? "")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            // Progress: watched position, plus how far the server has transcoded
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.white.opacity(0.15))
+                    if let c = s.TranscodingInfo?.CompletionPercentage {
+                        Rectangle().fill(Color.white.opacity(0.3)).frame(width: g.size.width * min(1, c / 100))
+                    }
+                    Rectangle().fill(Color.accentColor).frame(width: dur > 0 ? g.size.width * min(1, pos / dur) : 0)
+                }
+            }.frame(height: 4)
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 26)).frame(width: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(s.Client ?? "Unknown") \(s.ApplicationVersion ?? "")").font(.callout.weight(.semibold))
+                    Text([s.DeviceName, s.UserName].compactMap { $0 }.joined(separator: " · ")).foregroundColor(.secondary)
+                    if let ip = s.RemoteEndPoint { Text(ip).font(.caption).foregroundColor(.secondary) }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+        }
+        .background(Color.white.opacity(0.06))
+        .cornerRadius(10)
     }
 }
 
@@ -798,6 +920,8 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
     @ViewBuilder let content: (ID) -> Content
     @State private var pos: ID?
     @State private var width: CGFloat = 0
+    @State private var finder = ScrollFinder()
+    @State private var dragStart: CGFloat?
 
     /// How many items fit in the visible width.
     var visible: Int { max(1, Int((width - inset * 2 + spacing) / (itemWidth + spacing))) }
@@ -815,6 +939,21 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
                 }
                 .scrollTargetLayout()
                 .padding(.vertical, 8)
+                .background(ScrollFinderView(finder: finder))
+                // Click-and-drag to scroll with the mouse; a plain click still opens the item.
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 6)
+                        .onChanged { g in
+                            guard let sv = finder.scrollView else { return }
+                            let clip = sv.contentView
+                            if dragStart == nil { dragStart = clip.bounds.origin.x }
+                            let maxX = max(0, (sv.documentView?.frame.width ?? 0) - clip.bounds.width)
+                            let x = min(max(0, dragStart! - g.translation.width), maxX)
+                            clip.setBoundsOrigin(NSPoint(x: x, y: clip.bounds.origin.y))
+                            sv.reflectScrolledClipView(clip)
+                        }
+                        .onEnded { _ in dragStart = nil }
+                )
             }
             .scrollIndicators(.never)
             .contentMargins(.horizontal, inset, for: .scrollContent)
@@ -854,6 +993,21 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
         }
         .buttonStyle(.plain).help(help)
         .transition(.opacity)
+    }
+}
+
+/// Finds the NSScrollView behind a SwiftUI ScrollView so the mouse can drag it.
+final class ScrollFinder { weak var scrollView: NSScrollView? }
+
+struct ScrollFinderView: NSViewRepresentable {
+    let finder: ScrollFinder
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async { finder.scrollView = v.enclosingScrollView }
+        return v
+    }
+    func updateNSView(_ v: NSView, context: Context) {
+        if finder.scrollView == nil { DispatchQueue.main.async { finder.scrollView = v.enclosingScrollView } }
     }
 }
 
