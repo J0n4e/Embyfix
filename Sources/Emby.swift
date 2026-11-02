@@ -14,6 +14,9 @@ struct Item: Identifiable, Decodable, Hashable {
     let BackdropImageTags: [String]?
     let CollectionType: String?
     let UserData: UD?
+    let RunTimeTicks: Int64?
+    let CommunityRating: Double?
+    let Genres: [String]?
     struct UD: Decodable, Hashable { let Played: Bool?; let IsFavorite: Bool?; let PlayedPercentage: Double?; let UnplayedItemCount: Int?; let PlaybackPositionTicks: Int64? }
     var id: String { Id }
     var backdropId: String? { (BackdropImageTags ?? []).isEmpty ? ParentBackdropItemId : Id }
@@ -287,7 +290,7 @@ final class Emby: ObservableObject {
     func libraryItems(_ lib: LibPref, limit: Int, start: Int = 0, sort: String? = nil, desc: Bool? = nil,
                       watch: String = "all", genre: String = "", letter: String = "", favorites: Bool = false,
                       types: String = "Movie,Series,BoxSet,Video,MusicVideo") async -> ItemList {
-        var q = ["ParentId": lib.id, "Fields": "Overview", "Limit": String(limit), "StartIndex": String(start),
+        var q = ["ParentId": lib.id, "Fields": "Overview,Genres", "Limit": String(limit), "StartIndex": String(start),
                  "Recursive": "true", "IncludeItemTypes": types]
         var by = "DateCreated", down = true
         switch sort ?? lib.style {
@@ -319,7 +322,7 @@ final class Emby: ObservableObject {
         if libs.isEmpty { await loadLibs() }
         var rows: [Row] = []
         if let r: ItemList = try? await get("/Users/\(userId)/Items/Resume",
-            ["Fields": "Overview", "Limit": "20", "MediaTypes": "Video", "Recursive": "true"]),
+            ["Fields": "Overview,Genres", "Limit": "20", "MediaTypes": "Video", "Recursive": "true"]),
            !r.Items.isEmpty { rows.append(Row(title: "Continue Watching", items: r.Items)) }
         for lib in libs where lib.visible && lib.onHome {
             let items = await libraryItems(lib, limit: 20).Items
