@@ -1907,7 +1907,11 @@ struct PlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in isFullScreen = false }
         .onKeyPress(.leftArrow) { model.skip(-Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
-        .onKeyPress(.escape) { if panel != nil { panel = nil } else { close() }; return .handled }
+        .onKeyPress(.escape) {
+            // Esc: close a panel, else leave full screen (video keeps playing), else close the player
+            if panel != nil { panel = nil } else if isFullScreen { toggleFullScreen() } else { close() }
+            return .handled
+        }
         .task {
             focused = true
             poke()
