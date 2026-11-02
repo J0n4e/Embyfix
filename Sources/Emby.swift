@@ -48,7 +48,34 @@ struct MStream: Decodable, Identifiable {
     let IsDefault: Bool?
     let Language: String?
     let Codec: String?
+    let Width: Int?
+    let Height: Int?
+    let BitRate: Int?
     var id: Int { Index }
+}
+
+/// A chapter or an intro/credits marker (Emby 4.8+: MarkerType IntroStart / IntroEnd / CreditsStart).
+struct Chapter: Decodable {
+    let StartPositionTicks: Int64
+    let Name: String?
+    let MarkerType: String?
+    let ImageTag: String?
+    var start: Double { Double(StartPositionTicks) / 10_000_000 }
+    var isMarker: Bool { (MarkerType ?? "Chapter") != "Chapter" }
+}
+
+/// Audio/subtitle choices remembered per series.
+enum SeriesLang {
+    private static let key = "seriesLang"
+    private static var all: [String: [String: String]] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+    }
+    static func get(_ seriesId: String) -> [String: String]? { all[seriesId] }
+    static func set(_ seriesId: String, _ k: String, _ v: String) {
+        var a = all
+        a[seriesId, default: [:]][k] = v
+        UserDefaults.standard.set(a, forKey: key)
+    }
 }
 struct MSource: Decodable, Identifiable {
     let Id: String
@@ -73,6 +100,7 @@ struct Full: Decodable {
     let ExternalUrls: [Link]?
     let RemoteTrailers: [Link]?
     let UserData: UD?
+    let Chapters: [Chapter]?
     struct Named: Decodable { let Name: String }
     struct Person: Decodable, Identifiable {
         let Id: String
@@ -247,13 +275,32 @@ final class Emby: ObservableObject {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    /// Debug: this device's session as the server sees it (play state + transcode info), as raw JSON.
-    func mySessionJSON() async -> String {
-        guard let u = URL(string: "\(server)/Sessions?DeviceId=\(deviceId)") else { return "" }
+    /// This device's session as the server sees it (play state + transcode info).
+    func sessionInfo() async -> [String: Any]? {
+        guard let u = URL(string: "\(server)/Sessions?DeviceId=\(deviceId)") else { return nil }
         var r = URLRequest(url: u)
         r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
         guard let (d, _) = try? await URLSession.shared.data(for: r),
-              let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]], let s = arr.first else { return "no session" }
+              let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
+        return arr.first
+    }
+
+    /// Thumbnail strip for scrubbing previews (Roku BIF format), if the server has generated one.
+    func bifData(_ id: String, _ sourceId: String?) async -> Data? {
+        var s = "\(server)/Videos/\(id)/index.bif?Width=320&api_key=\(token)"
+        if let sourceId { s += "&MediaSourceId=\(sourceId)" }
+        guard let u = URL(string: s), let (d, r) = try? await URLSession.shared.data(from: u),
+              (r as? HTTPURLResponse)?.statusCode == 200, d.count > 64 else { return nil }
+        return d
+    }
+
+    func chapterImage(_ id: String, _ index: Int, _ tag: String) -> URL? {
+        URL(string: "\(server)/Items/\(id)/Images/Chapter/\(index)?maxWidth=320&tag=\(tag)&api_key=\(token)")
+    }
+
+    /// Debug: this device's session as the server sees it (play state + transcode info), as raw JSON.
+    func mySessionJSON() async -> String {
+        guard let s = await sessionInfo() else { return "no session" }
         var out: [String: Any] = [:]
         if let ps = s["PlayState"] as? [String: Any] {
             out["pos"] = (ps["PositionTicks"] as? Double ?? 0) / 10_000_000
@@ -453,7 +500,7 @@ final class Emby: ObservableObject {
     }
 
     func full(_ id: String) async -> Full? {
-        try? await get("/Users/\(userId)/Items/\(id)", ["Fields": "Overview,People,Genres,Studios,MediaSources,MediaStreams,Taglines,DateCreated,ExternalUrls,RemoteTrailers"])
+        try? await get("/Users/\(userId)/Items/\(id)", ["Fields": "Overview,People,Genres,Studios,MediaSources,MediaStreams,Taglines,DateCreated,ExternalUrls,RemoteTrailers,Chapters"])
     }
 
     func similar(_ id: String) async -> [Item] {
