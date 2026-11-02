@@ -55,7 +55,11 @@ struct RootView: View {
     @EnvironmentObject var emby: Emby
     var body: some View {
         ZStack {
-            if emby.loggedIn { HomeView() } else { LoginView() }
+            // Hide (but keep) the screen under the player: AppKit controls such as spinners
+            // otherwise draw on top of the video.
+            Group { if emby.loggedIn { HomeView() } else { LoginView() } }
+                .opacity(emby.playing == nil ? 1 : 0)
+                .allowsHitTesting(emby.playing == nil)
             if let req = emby.playing {
                 PlayerView(req: req).id(req.id).zIndex(10)
             }
@@ -2017,7 +2021,11 @@ struct PlayerView: View {
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(3))
-            if !Task.isCancelled && model.playing && panel == nil { withAnimation { showUI = false } }
+            if !Task.isCancelled && model.playing && panel == nil {
+                withAnimation { showUI = false }
+                // Full screen: hide the pointer with the controls; it comes back when the mouse moves
+                if isFullScreen { NSCursor.setHiddenUntilMouseMoves(true) }
+            }
         }
     }
 
