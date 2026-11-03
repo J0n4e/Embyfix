@@ -29,7 +29,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Search across movies, shows and people.
 
 ### Player
-- Direct play or HLS transcode, with a quality picker. Server transcodes are stopped when you close the player.
+- Direct play or HLS transcode. Quick **subtitle** and **quality** menus sit in the player's bottom bar. Server transcodes are stopped when you close the player, and are kept alive while you pause, so subtitles stay in sync after resuming.
 - Resume and Start Over, with progress synced to the server. Playback starts directly at the resume point, so subtitles stay in sync.
 - **Subtitles:**
   - text subtitles (SRT and others) are drawn by the app; image subtitles (PGS) are burned in by the server
@@ -55,13 +55,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.5 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.6 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.5`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.6`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 

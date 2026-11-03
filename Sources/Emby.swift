@@ -502,6 +502,11 @@ final class Emby: ObservableObject {
         await postJSON("/Sessions/Playing/Progress", progressBody(s, sec, paused: paused))
     }
 
+    /// Tells the server this playback is still alive (used while paused, so it keeps the transcode running).
+    func ping(_ s: PlaySession) async {
+        await send("POST", "/Sessions/Playing/Ping?PlaySessionId=\(s.id)")
+    }
+
     func reportStopped(_ s: PlaySession, _ sec: Double, duration: Double) async {
         let finished = duration > 0 && sec / duration > 0.9
         positions[s.itemId] = finished ? 0 : sec

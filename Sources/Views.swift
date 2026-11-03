@@ -2136,24 +2136,40 @@ final class PlayerModel: ObservableObject {
         if p.rate > 0 {
             p.pause(); pausedAt = Date()
             dlog("pause at \(fmt(now))")
+            pausedKeepAlive(true)
             startDebugPolling()
         } else {
             let away = pausedAt.map { Date().timeIntervalSince($0) } ?? 0
             pausedAt = nil
+            pausedKeepAlive(false)
             debugTimer?.invalidate(); debugTimer = nil
             dlog("resume at \(fmt(now)) after \(Int(away))s pause")
-            // After a long pause the server may have stopped/restarted its transcode, shifting the
-            // stream's timeline. Re-seeking makes the player fetch fresh segments and realign its clock.
-            if away > 30, session?.method == "Transcode" {
-                let t = now
-                dlog("realign: re-seek to \(fmt(t))")
-                p.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                    Task { @MainActor in self?.dlog("realigned, player at \(self?.fmt(self?.now ?? 0) ?? "")"); self?.logServer() }
-                }
-            }
+            // No re-seek here: the pause keep-alive stops the server from restarting its transcode, and a
+            // zero-tolerance seek on resume could hang the stream.
             p.play()
+            logServer()
         }
         playing = p.rate > 0
+    }
+
+    /// While paused the player stops asking for video, and after ~60 s of silence the server ends the
+    /// session and kills the transcode. Resuming then starts a new transcode whose timeline is slightly
+    /// offset, so subtitles drift. Report the pause at once and keep pinging until playback resumes.
+    private var keepAlive: Timer?
+    private func pausedKeepAlive(_ on: Bool) {
+        keepAlive?.invalidate(); keepAlive = nil
+        guard let ps = session, reportedStart else { return }
+        let t = now, e = emby
+        lastReport = t
+        Task { await e?.reportProgress(ps, t, paused: on) }
+        guard on else { return }
+        keepAlive = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let ps = self.session, let e = self.emby else { return }
+                await e.ping(ps)
+                await e.reportProgress(ps, self.now, paused: true)
+            }
+        }
     }
 
     // MARK: debug log (~/Library/Logs/EmbyFlix.log)
@@ -2215,6 +2231,7 @@ final class PlayerModel: ObservableObject {
         if let o = timeObs { player?.removeTimeObserver(o) }
         timeObs = nil
         debugTimer?.invalidate(); debugTimer = nil; pausedAt = nil
+        keepAlive?.invalidate(); keepAlive = nil
         if pip?.isPictureInPictureActive == true { pip?.stopPictureInPicture() }
         player?.pause(); player = nil; obs = nil; caption = ""; resumeTarget = 0
     }
@@ -2737,8 +2754,54 @@ struct PlayerView: View {
 extension PlayerView {
     // MARK: Extra controls
 
+    static let qualities: [(Int, String)] = [(0, "Original"), (8_000_000, "1080p · 8 Mbps"),
+                                             (4_000_000, "720p · 4 Mbps"), (1_500_000, "480p · 1.5 Mbps")]
+
+    /// Quick dropdown: subtitle language.
+    var subtitleMenu: some View {
+        Menu {
+            Button { Task { await model.setSub(emby, nil) } } label: {
+                if model.sub == nil { Label("Off", systemImage: "checkmark") } else { Text("Off") }
+            }
+            ForEach(model.subStreams) { st in
+                let name = st.DisplayTitle ?? "Track \(st.Index)"
+                Button { Task { await model.setSub(emby, st.Index) } } label: {
+                    if model.sub == st.Index { Label(name, systemImage: "checkmark") } else { Text(name) }
+                }
+            }
+        } label: {
+            menuIcon("captions.bubble", on: model.sub != nil)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("Subtitles")
+    }
+
+    /// Quick dropdown: video quality.
+    var qualityMenu: some View {
+        Menu {
+            ForEach(Self.qualities, id: \.0) { q in
+                Button { Task { await model.setQuality(emby, q.0) } } label: {
+                    if model.quality == q.0 { Label(q.1, systemImage: "checkmark") } else { Text(q.1) }
+                }
+            }
+        } label: {
+            menuIcon("dial.medium", on: model.quality != 0)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("Video quality")
+    }
+
+    func menuIcon(_ name: String, on: Bool) -> some View {
+        Image(systemName: name).font(.system(size: 18, weight: .medium))
+            .frame(width: 30, height: 30)
+            .foregroundColor(on ? accent : .white)
+            .contentShape(Rectangle())
+    }
+
     var extraButtons: some View {
         HStack(spacing: 22) {
+            if !model.subStreams.isEmpty { subtitleMenu }
+            qualityMenu
             if !model.chapterList.isEmpty {
                 iconButton("list.bullet.rectangle", size: 18, on: panel == .chapters) {
                     withAnimation(.easeOut(duration: 0.2)) { panel = panel == .chapters ? nil : .chapters }
