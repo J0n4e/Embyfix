@@ -25,23 +25,23 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - **Actor pages:** click anyone in Cast & Crew to see all their movies and shows in your libraries.
 - Favorites and watched/unwatched badges.
 - **Now Playing:** every active stream on the server, with its title, position, direct play or transcode, client, device, user and IP.
-- Rows scroll with the arrows (one item per click), by dragging with the mouse, or with the trackpad.
+- Rows scroll with the arrows (one item per click; each arrow hides when that end is reached), by dragging with the mouse, or with the trackpad.
 - Search across movies, shows and people.
 
 ### Player
 - Direct play or HLS transcode, with a quality picker. Server transcodes are stopped when you close the player.
-- Resume and Start Over, with progress synced to the server.
+- Resume and Start Over, with progress synced to the server. Playback starts directly at the resume point, so subtitles stay in sync.
 - **Subtitles:**
   - text subtitles (SRT and others) are drawn by the app; image subtitles (PGS) are burned in by the server
   - adjustable offset, size, colour, shadow, background and position
   - you can always load your preferred language
   - audio and subtitle choices are remembered per series
 - **Skip intros automatically** using Emby's intro markers. You can turn this off to get a Skip Intro button instead.
-- **Up next card** with a countdown at the end credits.
+- **Up next card** in the last 30 seconds of an episode, showing when the next one starts. Space or Return plays it now.
 - **Thumbnail previews** when hovering or dragging the progress bar (uses Emby's generated thumbnails).
 - **Chapters** panel (C), **picture in picture** (P) and a **playback info** overlay (I) that shows codecs, bitrate and why the server is transcoding.
-- Video-only full screen (F). Esc leaves full screen without stopping the video. In full screen the pointer hides and the screen saver is blocked.
-- Keyboard: Space play/pause, ← → skip, F full screen, C chapters, I info, P picture in picture, Esc back.
+- Video-only full screen (F). Esc leaves full screen without stopping the video. In full screen the pointer hides. The screen saver and display sleep are blocked while a video plays.
+- Keyboard: Space play/pause (or play the next episode when the Up next card shows), ← → skip, F full screen, C chapters, I info, P picture in picture, Esc back.
 
 ### Settings (⌘,)
 General, Libraries, Series & Episodes, Subtitles, Playback, Servers, and About with the update controls.
@@ -55,7 +55,7 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.4 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.5 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
