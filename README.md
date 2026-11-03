@@ -10,6 +10,8 @@ A Netflix-style native macOS client for [Emby](https://emby.media), written in S
 2. Move **EmbyFlix.app** to **Applications**.
 3. The first time, right-click the app and choose **Open**. The app is ad-hoc signed, not notarized.
 
+Closing the window quits the app; click the Dock icon to open it again.
+
 After that, EmbyFlix keeps itself up to date. It checks for new releases at launch and installs them with one click. You can also check yourself under **EmbyFlix → Check for Updates…**.
 
 ## Features
@@ -26,7 +28,8 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Favorites and watched/unwatched badges.
 - **Now Playing:** every active stream on the server, with its title, position, direct play or transcode, client, device, user and IP.
 - Rows scroll with the arrows (one item per click; each arrow hides when that end is reached), by dragging with the mouse, or with the trackpad.
-- Search across movies, shows and people.
+- Search across movies, shows and people. Matching people appear in their own row and open their actor page.
+- Posters, seasons and episodes lift on hover; episodes show a play button.
 
 ### Player
 - Direct play or HLS transcode. Quick **subtitle** and **quality** menus sit in the player's bottom bar. Server transcodes are stopped when you close the player, and are kept alive while you pause, so subtitles stay in sync after resuming.
@@ -55,13 +58,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.6 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.6.1 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.6`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.6.1`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
