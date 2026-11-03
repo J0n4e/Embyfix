@@ -324,16 +324,19 @@ struct SearchView: View {
     @Environment(\.appBG) var bg
     let query: String
     @State private var results: [Item] = []
+    @State private var people: [Item] = []
     @State private var busy = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Results for “\(query)”").font(.title2.bold())
+                if !people.isEmpty { peopleRow }
+                if !people.isEmpty && !results.isEmpty { Text("Titles").font(.title3.bold()).padding(.top, 8) }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
                     ForEach(results) { PosterCard(item: $0) }
                 }
                 if busy { Spinner() }
-                else if results.isEmpty { Text("No results").foregroundColor(.secondary) }
+                else if results.isEmpty && people.isEmpty { Text("No results").foregroundColor(.secondary) }
             }.padding(40)
         }
         .background(bg)
@@ -341,8 +344,37 @@ struct SearchView: View {
             busy = true
             try? await Task.sleep(nanoseconds: 350_000_000)
             if Task.isCancelled { return }
-            results = await emby.search(query)
+            async let titles = emby.search(query)
+            async let persons = emby.searchPeople(query)
+            results = await titles
+            people = await persons
             busy = false
+        }
+    }
+
+    /// Matching people as round photo tiles; each opens the person's page.
+    var peopleRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("People").font(.title3.bold())
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 18) {
+                    ForEach(people) { p in
+                        NavigationLink(value: PersonRef(id: p.Id, name: p.Name)) {
+                            VStack(spacing: 6) {
+                                AsyncImage(url: emby.image(p.Id, width: 240)) { img in
+                                    img.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 30)).foregroundColor(.secondary) }
+                                }
+                                .frame(width: 96, height: 96).clipShape(Circle())
+                                .hoverLift()
+                                Text(p.Name).font(.caption.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+                            }.frame(width: 110)
+                        }
+                        .buttonStyle(.plain).help("Show everything with \(p.Name)")
+                    }
+                }.padding(.vertical, 8)
+            }
         }
     }
 }
@@ -798,8 +830,7 @@ struct PosterCard: View {
                     }
                 }
                 .cornerRadius(8)
-                .scaleEffect(hover ? 1.06 : 1).shadow(radius: hover ? 12 : 0)
-                .animation(.easeOut(duration: 0.15), value: hover)
+                .modifier(HoverLift(hover: hover))
                 Text(item.Name).font(.callout.weight(.semibold)).lineLimit(1)
                 Text(item.ProductionYear.map { String($0) } ?? " ").font(.caption).foregroundColor(.secondary)
             }
@@ -1571,6 +1602,7 @@ struct DetailView: View {
                 .overlay(alignment: .topTrailing) { CountBadge(count: unwatched(n)).padding(8) }
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: selected ? 3 : 0))
                 .shadow(radius: 6)
+                .hoverLift()
                 Text(title).font(.body).foregroundColor(selected ? .primary : .secondary)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain)
@@ -1610,6 +1642,7 @@ struct DetailView: View {
                 } placeholder: { Color(white: 0.15) }
                 .frame(width: 160, height: 90).clipped().cornerRadius(4)
                 .opacity(played ? 0.6 : 1)
+                .hoverLift(play: 28)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(label).bold()
                     Text(ep.Overview ?? "").lineLimit(2).font(.caption).foregroundColor(.secondary)
@@ -1677,6 +1710,7 @@ struct DetailView: View {
                         ProgressView(value: pct / 100).padding(.horizontal, 8).padding(.bottom, 6)
                     }
                 }
+                .hoverLift(play: 40)
                 Text(label).font(.headline).lineLimit(1)
                 Text(ep.Overview ?? "").font(.caption).foregroundColor(.secondary).lineLimit(2)
             }.contentShape(Rectangle())
@@ -3105,4 +3139,37 @@ enum KeepAwake {
             id = 0
         }
     }
+}
+
+/// The poster hover effect: lift 6 % with a shadow, drawn above its neighbours.
+struct HoverLift: ViewModifier {
+    var hover: Bool
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(hover ? 1.06 : 1)
+            .shadow(radius: hover ? 12 : 0)
+            .animation(.easeOut(duration: 0.15), value: hover)
+            .zIndex(hover ? 1 : 0)
+    }
+}
+
+/// HoverLift that tracks the pointer itself; optionally shows a play button on hover (as on Continue Watching).
+struct SelfHoverLift: ViewModifier {
+    var play: CGFloat = 0
+    @State private var hover = false
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if hover && play > 0 {
+                    Image(systemName: "play.circle.fill").font(.system(size: play)).foregroundColor(.white)
+                        .shadow(radius: 6)
+                }
+            }
+            .modifier(HoverLift(hover: hover)).onHover { hover = $0 }
+    }
+}
+
+extension View {
+    /// `play`: size of the play button shown on hover (0 = none).
+    func hoverLift(play: CGFloat = 0) -> some View { modifier(SelfHoverLift(play: play)) }
 }

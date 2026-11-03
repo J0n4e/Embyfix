@@ -3,6 +3,7 @@ import AppKit
 
 @main
 struct EmbyFlixApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var emby = Emby()
     @AppStorage("accent") private var accent = "red"
     @AppStorage("bg") private var bg = "black"
@@ -48,4 +49,10 @@ enum AppVersion {
     static func pretty(_ v: String) -> String {
         v.replacingOccurrences(of: #"(\d)(Beta|Alpha|RC)"#, with: "$1 $2", options: .regularExpression)
     }
+}
+
+/// Closing the window quits the app. Otherwise it kept running with no window, and clicking the Dock
+/// icon didn't bring a window back.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
