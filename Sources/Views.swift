@@ -1101,6 +1101,7 @@ struct LibraryView: View {
     @State private var genres: [String] = []
     @State private var letter = ""
     @State private var layout: String
+    @State private var groupCol: Bool
 
     init(lib: LibPref) {
         self.lib = lib
@@ -1109,11 +1110,15 @@ struct LibraryView: View {
         _desc = State(initialValue: d["desc"] as? Bool ?? false)
         _watch = State(initialValue: d["watch"] as? String ?? "all")
         _genre = State(initialValue: d["genre"] as? String ?? "")
+        _groupCol = State(initialValue: d["groupCollections"] as? Bool ?? false)
         _layout = State(initialValue: d["layout"] as? String
                         ?? UserDefaults.standard.string(forKey: "defaultLibraryLayout") ?? "grid")
     }
 
-    var key: String { "\(tab)|\(sort)|\(desc)|\(watch)|\(genre)|\(letter)" }
+    var key: String { "\(tab)|\(sort)|\(desc)|\(watch)|\(genre)|\(letter)|\(grouping)" }
+    /// "Group by Collection" applies to the main tab of movie libraries.
+    var canGroup: Bool { lib.kind == "movies" && tab == 0 }
+    var grouping: Bool { canGroup && groupCol }
     var filtered: Bool { watch != "all" || !genre.isEmpty }
     var types: String { (tab == 1 || lib.kind == "boxsets") ? "BoxSet" : "Movie,Series,Video,MusicVideo" }
     var sortLabel: String {
@@ -1126,7 +1131,8 @@ struct LibraryView: View {
     }
 
     func save() {
-        let d: [String: Any] = ["sort": sort, "desc": desc, "watch": watch, "genre": genre, "layout": layout]
+        let d: [String: Any] = ["sort": sort, "desc": desc, "watch": watch, "genre": genre, "layout": layout,
+                                "groupCollections": groupCol]
         UserDefaults.standard.set(d, forKey: "lf-" + lib.id)
     }
 
@@ -1142,7 +1148,7 @@ struct LibraryView: View {
         .task(id: key) { await load(reset: true) }
         .task { genres = await emby.genres(lib) }
         .onChange(of: sort) { desc = (sort != "name") }
-        .onChange(of: "\(sort)|\(desc)|\(watch)|\(genre)|\(layout)") { save() }
+        .onChange(of: "\(sort)|\(desc)|\(watch)|\(genre)|\(layout)|\(groupCol)") { save() }
     }
 
     var alphaBar: some View {
@@ -1221,6 +1227,10 @@ struct LibraryView: View {
             }
             layoutToggle
             Menu {
+                if canGroup {
+                    Toggle("Group by Collection", isOn: $groupCol)
+                    Divider()
+                }
                 Button("Refresh") { Task { await load(reset: true) } }
             } label: { Image(systemName: "ellipsis").pill() }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -1279,7 +1289,8 @@ struct LibraryView: View {
 
     func fetch(start: Int, limit: Int, sort s: String) async -> ItemList {
         await emby.libraryItems(lib, limit: limit, start: start, sort: s, desc: s == sort ? desc : nil,
-                                watch: watch, genre: genre, letter: letter, favorites: tab == 3, types: types)
+                                watch: watch, genre: genre, letter: letter, favorites: tab == 3, types: types,
+                                groupCollections: grouping)
     }
 
     func load(reset: Bool) async {
