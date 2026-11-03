@@ -581,6 +581,13 @@ final class Emby: ObservableObject {
         return r?.Items ?? []
     }
 
+    /// Actors, directors etc. matching the search, limited to people in the user's libraries.
+    func searchPeople(_ term: String) async -> [Item] {
+        let r: ItemList? = try? await get("/Persons", ["SearchTerm": term, "UserId": userId, "Limit": "24",
+            "Recursive": "true", "Fields": "PrimaryImageAspectRatio"])
+        return r?.Items ?? []
+    }
+
     // MARK: Playback
 
     private func absolute(_ path: String) -> URL? {
