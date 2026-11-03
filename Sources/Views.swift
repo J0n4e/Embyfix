@@ -513,6 +513,7 @@ struct PersonView: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.appBG) var bg
     let person: PersonRef
+    @Environment(\.dismiss) var dismiss
     @State private var items: [Item] = []
     @State private var bio = ""
     @State private var loading = true
@@ -536,6 +537,8 @@ struct PersonView: View {
         }
         .background(bg)
         .navigationTitle(person.name)
+        .navigationBarBackButtonHidden(true)
+        .toolbar { ToolbarItem(placement: .navigation) { BackPill(compact: true) { dismiss() } } }
         .task {
             async let list = emby.itemsWithPerson(person.id)
             async let me = emby.person(person.id)
@@ -913,75 +916,54 @@ func timeString(_ t: Double) -> String {
 }
 
 /// Horizontal row with ‹ › buttons that page through items that don't fit on screen.
-/// The buttons only show when there is more to see in that direction; trackpad scrolling still works.
+/// Arrow visibility and paging use the real scroll offset of the underlying NSScrollView, so they stay
+/// correct at any window size (including full screen) and each arrow hides once that end is reached.
 struct ArrowScrollRow<ID: Hashable, Content: View>: View {
     let ids: [ID]
     let itemWidth: CGFloat
     var spacing: CGFloat = 18
     var inset: CGFloat = 40
     @ViewBuilder let content: (ID) -> Content
-    @State private var pos: ID?
-    @State private var width: CGFloat = 0
-    @State private var finder = ScrollFinder()
+    @StateObject private var finder = ScrollFinder()
     @State private var dragStart: CGFloat?
 
-    /// How many items fit in the visible width.
-    var visible: Int { max(1, Int((width - inset * 2 + spacing) / (itemWidth + spacing))) }
-    /// Index of the first visible item.
-    var index: Int { pos.flatMap { ids.firstIndex(of: $0) } ?? 0 }
-    var canGoBack: Bool { index > 0 }
-    var canGoForward: Bool { index + visible < ids.count }
-
     var body: some View {
-        ScrollViewReader { proxy in
-            // No scrollbar: the arrows page the row; trackpad / wheel scrolling still works.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: spacing) {
-                    ForEach(ids, id: \.self) { id in content(id).id(id) }
-                }
-                .scrollTargetLayout()
-                .padding(.vertical, 8)
-                .background(ScrollFinderView(finder: finder))
-                // Click-and-drag to scroll with the mouse; a plain click still opens the item.
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 6)
-                        .onChanged { g in
-                            guard let sv = finder.scrollView else { return }
-                            let clip = sv.contentView
-                            if dragStart == nil { dragStart = clip.bounds.origin.x }
-                            let maxX = max(0, (sv.documentView?.frame.width ?? 0) - clip.bounds.width)
-                            let x = min(max(0, dragStart! - g.translation.width), maxX)
-                            clip.setBoundsOrigin(NSPoint(x: x, y: clip.bounds.origin.y))
-                            sv.reflectScrolledClipView(clip)
-                        }
-                        .onEnded { _ in dragStart = nil }
-                )
+        // No scrollbar: the arrows page the row; trackpad / wheel scrolling still works.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: spacing) {
+                ForEach(ids, id: \.self) { id in content(id).id(id) }
             }
-            .scrollIndicators(.never)
-            .contentMargins(.horizontal, inset, for: .scrollContent)
-            .scrollPosition(id: $pos)
-            .background(GeometryReader { g in
-                Color.clear
-                    .onAppear { width = g.size.width }
-                    .onChange(of: g.size.width) { width = g.size.width }
-            })
-            .overlay(alignment: .leading) {
-                if canGoBack { arrow("chevron.left", help: "Previous") { page(-1, proxy) }.padding(.leading, 6) }
-            }
-            .overlay(alignment: .trailing) {
-                if canGoForward { arrow("chevron.right", help: "Next") { page(1, proxy) }.padding(.trailing, 6) }
-            }
-            .animation(.easeOut(duration: 0.15), value: canGoBack)
-            .animation(.easeOut(duration: 0.15), value: canGoForward)
+            .padding(.vertical, 8)
+            .background(ScrollFinderView(finder: finder))
+            // Click-and-drag to scroll with the mouse; a plain click still opens the item.
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 6)
+                    .onChanged { g in
+                        guard let sv = finder.scrollView else { return }
+                        let clip = sv.contentView
+                        if dragStart == nil { dragStart = clip.bounds.origin.x }
+                        let maxX = max(0, (sv.documentView?.frame.width ?? 0) - clip.bounds.width)
+                        let x = min(max(0, dragStart! - g.translation.width), maxX)
+                        clip.setBoundsOrigin(NSPoint(x: x, y: clip.bounds.origin.y))
+                        sv.reflectScrolledClipView(clip)
+                    }
+                    .onEnded { _ in dragStart = nil }
+            )
         }
-    }
-
-    func page(_ dir: Int, _ proxy: ScrollViewProxy) {
-        guard !ids.isEmpty else { return }
-        // One item per click, with a smooth slide
-        let target = min(max(0, index + dir), max(0, ids.count - visible))
-        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(ids[target], anchor: .leading) }
-        pos = ids[target]
+        .scrollIndicators(.never)
+        .contentMargins(.horizontal, inset, for: .scrollContent)
+        .overlay(alignment: .leading) {
+            if finder.canBack {
+                arrow("chevron.left", help: "Previous") { finder.page(-1, step: itemWidth + spacing) }.padding(.leading, 6)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if finder.canFwd {
+                arrow("chevron.right", help: "Next") { finder.page(1, step: itemWidth + spacing) }.padding(.trailing, 6)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: finder.canBack)
+        .animation(.easeOut(duration: 0.15), value: finder.canFwd)
     }
 
     func arrow(_ icon: String, help: String, _ action: @escaping () -> Void) -> some View {
@@ -998,18 +980,75 @@ struct ArrowScrollRow<ID: Hashable, Content: View>: View {
     }
 }
 
-/// Finds the NSScrollView behind a SwiftUI ScrollView so the mouse can drag it.
-final class ScrollFinder { weak var scrollView: NSScrollView? }
+/// Finds the NSScrollView behind a SwiftUI ScrollView (for mouse dragging and arrow paging) and
+/// publishes whether there is more content to the left / right of what is currently visible.
+final class ScrollFinder: ObservableObject {
+    weak var scrollView: NSScrollView?
+    @Published var canBack = false
+    @Published var canFwd = false
+    private var tokens: [NSObjectProtocol] = []
+
+    func attach(_ sv: NSScrollView?) {
+        guard let sv, sv !== scrollView else { return }
+        scrollView = sv
+        let nc = NotificationCenter.default
+        for t in tokens { nc.removeObserver(t) }
+        tokens = []
+        // Scrolling and window / full-screen resizes change the clip view's bounds
+        sv.contentView.postsBoundsChangedNotifications = true
+        tokens.append(nc.addObserver(forName: NSView.boundsDidChangeNotification, object: sv.contentView, queue: .main) { [weak self] _ in
+            self?.refresh()
+        })
+        // Content loading or changing size changes the document view's frame
+        if let doc = sv.documentView {
+            doc.postsFrameChangedNotifications = true
+            tokens.append(nc.addObserver(forName: NSView.frameDidChangeNotification, object: doc, queue: .main) { [weak self] _ in
+                self?.refresh()
+            })
+        }
+        refresh()
+    }
+
+    deinit { for t in tokens { NotificationCenter.default.removeObserver(t) } }
+
+    func refresh() {
+        guard let sv = scrollView, let doc = sv.documentView else { return }
+        let clip = sv.contentView
+        let ins = sv.contentInsets
+        let lo = -ins.left
+        let hi = doc.frame.width + ins.right
+        let back = clip.bounds.minX > lo + 1
+        let fwd = clip.bounds.maxX < hi - 1
+        if back != canBack { canBack = back }
+        if fwd != canFwd { canFwd = fwd }
+    }
+
+    /// Slides the row by `step` points in the given direction, stopping at either end.
+    func page(_ dir: Int, step: CGFloat) {
+        guard let sv = scrollView, let doc = sv.documentView else { return }
+        let clip = sv.contentView
+        let ins = sv.contentInsets
+        let lo = -ins.left
+        let hi = max(lo, doc.frame.width + ins.right - clip.bounds.width)
+        let x = min(max(lo, clip.bounds.origin.x + CGFloat(dir) * step), hi)
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.3
+            clip.animator().setBoundsOrigin(NSPoint(x: x, y: clip.bounds.origin.y))
+        }, completionHandler: { [weak sv] in
+            if let sv { sv.reflectScrolledClipView(sv.contentView) }
+        })
+    }
+}
 
 struct ScrollFinderView: NSViewRepresentable {
     let finder: ScrollFinder
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
-        DispatchQueue.main.async { finder.scrollView = v.enclosingScrollView }
+        DispatchQueue.main.async { finder.attach(v.enclosingScrollView) }
         return v
     }
     func updateNSView(_ v: NSView, context: Context) {
-        if finder.scrollView == nil { DispatchQueue.main.async { finder.scrollView = v.enclosingScrollView } }
+        if finder.scrollView == nil { DispatchQueue.main.async { finder.attach(v.enclosingScrollView) } }
     }
 }
 
@@ -1752,6 +1791,7 @@ final class PlayerModel: ObservableObject {
     private var timeObs: Any?
     private var req: PlayRequest?
     private var pendingSeek: Double = 0
+    private var resumeTarget: Double = 0      // where the item was told to start; checked once it is ready
     private weak var emby: Emby?
     private var lastReport: Double = 0
     private var reportedStart = false
@@ -1837,6 +1877,15 @@ final class PlayerModel: ObservableObject {
         let method = u.absoluteString.contains("Static=true") ? "DirectPlay" : "Transcode"
         session = Emby.PlaySession(itemId: req.item.id, sourceId: req.sourceId, method: method, url: u)
         let it = AVPlayerItem(url: u)
+        // Start at the resume point right away. Loading from 0 and seeking afterwards makes the server restart
+        // its transcode part-way, which can shift the stream's timeline against the subtitles.
+        if pendingSeek > 0 {
+            resumeTarget = pendingSeek
+            time = pendingSeek
+            it.seek(to: CMTime(seconds: pendingSeek, preferredTimescale: 600),
+                    toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
+            pendingSeek = 0
+        }
         obs = it.observe(\.status, options: [.new]) { [weak self] i, _ in
             if i.status == .failed {
                 let m = i.error?.localizedDescription ?? "Playback failed."
@@ -1845,10 +1894,15 @@ final class PlayerModel: ObservableObject {
             if i.status == .readyToPlay {
                 Task { @MainActor in
                     guard let self else { return }
-                    if self.pendingSeek > 0 {
-                        let t = self.pendingSeek; self.pendingSeek = 0
-                        self.time = t
-                        await self.player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+                    if self.resumeTarget > 0 {
+                        let t = self.resumeTarget; self.resumeTarget = 0
+                        // Safety net in case the early seek was not applied: exact seek now
+                        if abs(self.now - t) > 2 {
+                            await self.player?.seek(to: CMTime(seconds: t, preferredTimescale: 600),
+                                                    toleranceBefore: .zero, toleranceAfter: .zero)
+                        }
+                        self.updateCaption(self.now)
+                        self.dlog("resume to \(self.fmt(t)): player at \(self.fmt(self.now)) (\(self.session?.method ?? "?"))")
                     }
                     if !self.reportedStart, let ps = self.session {
                         self.reportedStart = true
@@ -2162,7 +2216,7 @@ final class PlayerModel: ObservableObject {
         timeObs = nil
         debugTimer?.invalidate(); debugTimer = nil; pausedAt = nil
         if pip?.isPictureInPictureActive == true { pip?.stopPictureInPicture() }
-        player?.pause(); player = nil; obs = nil; caption = ""
+        player?.pause(); player = nil; obs = nil; caption = ""; resumeTarget = 0
     }
 }
 
@@ -2184,7 +2238,7 @@ struct PlayerView: View {
     @State private var hoverX: CGFloat?
     @State private var sliderW: CGFloat = 1
     @State private var upNextCancelled = false
-    @State private var upNextLeft = 10
+    @State private var switching = false
 
     // Subtitle appearance (defaults: normal size, white, drop shadow, transparent, 10% from bottom)
     @AppStorage("subTextSize") private var subTextSize = "normal"
@@ -2198,7 +2252,11 @@ struct PlayerView: View {
     @AppStorage("accent") private var accentName = "red"
     var accent: Color { Theme.accent(accentName) }
     @State private var isFullScreen = false
-    @State private var enteredFullScreen = false
+    // Remembered across episodes (each episode gets a fresh PlayerView), so closing the player still leaves full screen
+    var enteredFullScreen: Bool {
+        get { PlaybackFlag.shared.enteredFullScreen }
+        nonmutating set { PlaybackFlag.shared.enteredFullScreen = newValue }
+    }
 
     static let sizes: [(String, String, Double)] = [("smaller", "Smaller", 0.032), ("small", "Small", 0.038),
         ("normal", "Normal", 0.045), ("large", "Large", 0.055), ("larger", "Larger", 0.066)]
@@ -2225,6 +2283,7 @@ struct PlayerView: View {
 
     func close() {
         if enteredFullScreen, let w = window, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
+        enteredFullScreen = false
         let done = model.watchedEnough
         model.stop()
         emby.playing = nil
@@ -2233,6 +2292,8 @@ struct PlayerView: View {
 
     /// Plays a neighbouring episode, keeping the current subtitle language.
     func play(_ ep: Item) {
+        guard !switching else { return }
+        switching = true
         let lang = model.subStreams.first { $0.Index == model.sub }.map { DetailView.langName($0) }
         Task {
             let f = await emby.full(ep.id)
@@ -2319,29 +2380,31 @@ struct PlayerView: View {
         .foregroundColor(.white)
         .onContinuousHover { _ in poke() }
         .focusable().focused($focused).focusEffectDisabled()
-        .onKeyPress(.space) { model.togglePlay(); poke(); return .handled }
+        .onKeyPress(.space) {
+            if showUpNext, let n = nextEp { play(n) } else { model.togglePlay() }
+            poke(); return .handled
+        }
+        .onKeyPress(.return) {
+            if showUpNext, let n = nextEp { play(n); return .handled }
+            return .ignored
+        }
         .onKeyPress("f") { toggleFullScreen(); return .handled }
         .onKeyPress("i") { showInfo.toggle(); return .handled }
-        // No screen saver / display sleep while a full-screen video is playing
-        .onChange(of: model.playing && isFullScreen) { _, on in KeepAwake.set(on) }
-        .onDisappear { KeepAwake.set(false) }
+        // No screen saver / display sleep while a video is playing (windowed or full screen)
+        .onChange(of: model.playing) { _, on in KeepAwake.set(on, owner: model) }
+        .onDisappear { KeepAwake.set(false, owner: model) }
         .onKeyPress("p") { model.togglePiP(); return .handled }
+        // Keep keyboard focus on the player (Space must always reach it, e.g. for "Play now")
+        .onChange(of: showUpNext) { _, on in if on { focused = true } }
+        .onChange(of: panel) { _, p in if p == nil { focused = true } }
+        .onChange(of: focused) { _, f in if !f && panel == nil { DispatchQueue.main.async { focused = true } } }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in focused = true }
         .onKeyPress("c") { if !model.chapterList.isEmpty { panel = panel == .chapters ? nil : .chapters }; return .handled }
         .task(id: showInfo) {
             while showInfo && !Task.isCancelled {
                 infoLines = await model.playbackInfo()
                 try? await Task.sleep(for: .seconds(2))
             }
-        }
-        .task(id: showUpNext) {
-            guard showUpNext, autoNext else { upNextLeft = 10; return }
-            upNextLeft = 10
-            while upNextLeft > 0 {
-                try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { return }
-                if model.playing { upNextLeft -= 1 }
-            }
-            if showUpNext, let n = nextEp { play(n) }
         }
         .toolbar(.hidden, for: .windowToolbar)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in isFullScreen = true }
@@ -2355,13 +2418,14 @@ struct PlayerView: View {
         }
         .task {
             focused = true
+            isFullScreen = window?.styleMask.contains(.fullScreen) ?? false
             poke()
             if item.isEpisode, let sid = item.SeriesId { episodes = await emby.episodes(sid) }
         }
         .task { await model.start(emby, req) }
         .onDisappear { model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
-            if autoNext, let n = nextEp { play(n) } else { close() }
+            if autoNext, !upNextCancelled, let n = nextEp { play(n) } else { close() }
         }
     }
 
@@ -2723,9 +2787,11 @@ extension PlayerView {
 
     var showUpNext: Bool {
         guard item.isEpisode, nextEp != nil, !upNextCancelled, model.duration > 120 else { return false }
-        let from = model.creditsStart ?? (model.duration - 30)
-        return model.time >= from && model.time < model.duration - 0.5
+        return model.time >= model.duration - 30 && model.time < model.duration - 0.5
     }
+
+    /// Whole seconds until the episode ends.
+    var secsLeft: Int { max(0, Int((model.duration - model.time).rounded(.up))) }
 
     var cornerCards: some View {
         VStack(alignment: .trailing, spacing: 12) {
@@ -2767,15 +2833,20 @@ extension PlayerView {
                     .font(.system(size: 15, weight: .semibold)).lineLimit(2).frame(maxWidth: 220, alignment: .leading)
                 HStack(spacing: 10) {
                     Button { play(n) } label: {
-                        Text(autoNext ? "Play now (\(upNextLeft))" : "Play now").font(.system(size: 14, weight: .bold))
+                        Text("Play now").font(.system(size: 14, weight: .bold))
                             .foregroundColor(.black).padding(.horizontal, 14).padding(.vertical, 7)
                             .background(RoundedRectangle(cornerRadius: 6).fill(Color.white))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(accent, lineWidth: 3))
                     }.buttonStyle(.plain)
                     Button { upNextCancelled = true } label: {
                         Text("Cancel").font(.system(size: 14, weight: .semibold))
                             .padding(.horizontal, 14).padding(.vertical, 7)
                             .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.15)))
                     }.buttonStyle(.plain)
+                }
+                if autoNext {
+                    Text("Next starts in \(secsLeft)s")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
                 }
             }
         }
@@ -2950,18 +3021,23 @@ struct Spinner: View {
 final class PlaybackFlag: ObservableObject {
     static let shared = PlaybackFlag()
     @Published var active = false
+    var enteredFullScreen = false
 }
 
 
-/// Holds an IOKit assertion that stops the screen saver and display sleep.
+/// Holds an IOKit assertion that stops the screen saver and display sleep while any player is playing.
+/// Each player is an "owner", so the old player closing can't release the assertion the next episode just took.
 enum KeepAwake {
     private static var id: IOPMAssertionID = 0
-    static func set(_ on: Bool) {
-        if on, id == 0 {
+    private static var owners = Set<ObjectIdentifier>()
+    static func set(_ on: Bool, owner: AnyObject) {
+        let key = ObjectIdentifier(owner)
+        if on { owners.insert(key) } else { owners.remove(key) }
+        if !owners.isEmpty, id == 0 {
             IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
                                         IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                        "EmbyFlix is playing a video in full screen" as CFString, &id)
-        } else if !on, id != 0 {
+                                        "EmbyFlix is playing a video" as CFString, &id)
+        } else if owners.isEmpty, id != 0 {
             IOPMAssertionRelease(id)
             id = 0
         }
