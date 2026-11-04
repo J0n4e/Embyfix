@@ -791,7 +791,7 @@ struct ResumeCard: View {
     }
     /// Episodes have a landscape primary image; movies use their backdrop.
     var imageURL: URL? {
-        item.isEpisode ? emby.image(item.Id, width: 520) : emby.image(item.backdropId ?? item.Id, "Backdrop", width: 520)
+        item.isEpisode ? emby.image(item.Id, width: 520, plain: true) : emby.image(item.backdropId ?? item.Id, "Backdrop", width: 520)
     }
 
     var body: some View {
@@ -1535,13 +1535,17 @@ struct DetailView: View {
         }.font(.subheadline).foregroundColor(.secondary)
     }
 
+    /// Wraps onto more lines when the window is narrow, so long version names can't widen the page.
     var streamsRow: some View {
-        HStack(spacing: 20) {
+        FlowLayout(hSpacing: 20, vSpacing: 10) {
             if sources.count > 1 {
-                labeled("Version") {
+                HStack(spacing: 6) {
+                    Text("Version").foregroundColor(.secondary)
                     Picker("", selection: $srcIdx) {
                         ForEach(sources.indices, id: \.self) { Text(sources[$0].Name ?? sources[$0].Path ?? "Version \($0 + 1)").tag($0) }
                     }
+                    .pickerStyle(.menu).labelsHidden()
+                    .frame(maxWidth: 320)   // long file names are cut with "…"
                 }
             }
             if let v = streams("Video").first {
@@ -1568,7 +1572,9 @@ struct DetailView: View {
                     Text("480p · 1.5 Mbps").tag(1_500_000)
                 }
             }
-        }.font(.callout)
+        }
+        .font(.callout)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func labeled<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
@@ -1710,24 +1716,43 @@ struct DetailView: View {
         }.padding(.horizontal, 40).padding(.top, 10)
     }
 
+    /// Netflix-style episode row: big number, clean 16:9 still with progress, title + length, summary.
     func episodeRow(_ ep: Item) -> some View {
         let played: Bool = emby.isPlayed(ep)
-        let label: String = "S\(ep.ParentIndexNumber ?? 0)·E\(ep.IndexNumber ?? 0)  \(ep.Name)"
+        let pct: Double = ep.UserData?.PlayedPercentage ?? 0
         return Button { playEpisode(ep) } label: {
-            HStack(spacing: 14) {
-                AsyncImage(url: emby.image(ep.id, width: 320)) { img in
+            HStack(alignment: .center, spacing: 18) {
+                Text("\(ep.IndexNumber ?? 0)").font(.system(size: 26, weight: .semibold))
+                    .foregroundColor(.secondary).frame(width: 40)
+                AsyncImage(url: emby.image(ep.id, width: 480, plain: true)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color(white: 0.15) }
-                .frame(width: 160, height: 90).clipped().cornerRadius(4)
-                .opacity(played ? 0.6 : 1)
-                .hoverLift(play: 28)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(label).bold()
-                    Text(ep.Overview ?? "").lineLimit(2).font(.caption).foregroundColor(.secondary)
+                .frame(width: 220, height: 124).clipped()
+                .overlay(alignment: .bottom) {
+                    if pct > 0, pct < 100, !played {
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Rectangle().fill(Color.white.opacity(0.3))
+                                Rectangle().fill(.tint).frame(width: g.size.width * pct / 100)
+                            }
+                        }.frame(height: 4)
+                    }
                 }
-                Spacer()
-                WatchBadge(item: ep, played: played)
-            }.contentShape(Rectangle())
+                .cornerRadius(6)
+                .hoverLift(play: 36)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(ep.Name).font(.system(size: 16, weight: .semibold)).lineLimit(1)
+                        if played { Image(systemName: "checkmark.circle.fill").foregroundColor(WatchBadge.green) }
+                        Spacer()
+                        if let t = ep.RunTimeTicks, t > 0 { Text(runtimeText(t)).foregroundColor(.secondary) }
+                    }
+                    Text(ep.Overview ?? "").lineLimit(3).font(.callout).foregroundColor(.secondary)
+                }
+            }
+            .padding(.vertical, 14)
+            .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1) }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain).padding(.horizontal, 40)
         .contextMenu {
@@ -1775,7 +1800,7 @@ struct DetailView: View {
         return Button { playEpisode(ep) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: emby.image(ep.id, width: 520)) { img in
+                    AsyncImage(url: emby.image(ep.id, width: 520, plain: true)) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: { Color(white: 0.15) }
                     .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
@@ -3017,7 +3042,7 @@ extension PlayerView {
 
     func upNextCard(_ n: Item) -> some View {
         HStack(spacing: 14) {
-            AsyncImage(url: emby.image(n.Id, "Primary", width: 400)) { img in
+            AsyncImage(url: emby.image(n.Id, "Primary", width: 400, plain: true)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Color.white.opacity(0.1) }
             .frame(width: 160, height: 90).clipped().cornerRadius(6)
@@ -3112,7 +3137,7 @@ extension PlayerView {
         let played = emby.isPlayed(ep)
         return Button { if !current { panel = nil; play(ep) } } label: {
             HStack(spacing: 12) {
-                AsyncImage(url: emby.image(ep.Id, width: 320)) { img in
+                AsyncImage(url: emby.image(ep.Id, width: 320, plain: true)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.white.opacity(0.08) }
                 .frame(width: 120, height: 68).clipped().cornerRadius(5)
@@ -3398,5 +3423,52 @@ struct HoverPreview: View {
                 .overlay(Circle().stroke(Color.white.opacity(0.5), lineWidth: 1.5))
                 .contentShape(Circle())
         }.buttonStyle(.plain).help(help)
+    }
+}
+
+/// Lays children out left to right and wraps to a new line when the width runs out.
+struct FlowLayout: Layout {
+    var hSpacing: CGFloat = 12
+    var vSpacing: CGFloat = 8
+
+    private func rows(_ width: CGFloat, _ subviews: Subviews) -> [[(Int, CGSize)]] {
+        var rows: [[(Int, CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for (i, v) in subviews.enumerated() {
+            var sz = v.sizeThatFits(.unspecified)
+            if sz.width > width { sz = v.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
+            if x > 0 && x + sz.width > width { rows.append([]); x = 0 }
+            rows[rows.count - 1].append((i, sz))
+            x += sz.width + hSpacing
+        }
+        return rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let r = rows(width, subviews)
+        var h: CGFloat = 0, w: CGFloat = 0
+        for row in r {
+            var rowW: CGFloat = 0, rowH: CGFloat = 0
+            for (_, sz) in row { rowW += sz.width; rowH = max(rowH, sz.height) }
+            rowW += hSpacing * CGFloat(max(0, row.count - 1))
+            w = max(w, rowW)
+            h += rowH
+        }
+        h += vSpacing * CGFloat(max(0, r.count - 1))
+        return CGSize(width: proposal.width ?? w, height: h)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(bounds.width, subviews) {
+            var x = bounds.minX
+            let h = row.map(\.1.height).max() ?? 0
+            for (i, sz) in row {
+                subviews[i].place(at: CGPoint(x: x, y: y + (h - sz.height) / 2), proposal: ProposedViewSize(sz))
+                x += sz.width + hSpacing
+            }
+            y += h + vSpacing
+        }
     }
 }
