@@ -15,23 +15,43 @@ extension EnvironmentValues {
 enum Theme {
     static let accents: [(String, Color)] = [
         ("red", Color(red: 0.90, green: 0.04, blue: 0.08)), ("orange", .orange), ("pink", .pink),
-        ("purple", .purple), ("blue", .blue), ("teal", .teal), ("green", .green)
+        ("purple", .purple), ("blue", .blue), ("teal", .teal), ("green", .green), ("white", .white)
     ]
     static let backgrounds: [(String, Color)] = [
         ("black", .black), ("charcoal", Color(white: 0.11)), ("navy", Color(red: 0.04, green: 0.07, blue: 0.17)),
         ("plum", Color(red: 0.12, green: 0.05, blue: 0.15)), ("forest", Color(red: 0.04, green: 0.12, blue: 0.08))
     ]
     static func accent(_ n: String) -> Color { accents.first { $0.0 == n }?.1 ?? accents[0].1 }
+    /// Text color that stays readable on top of the accent color (black on white, white on everything else).
+    static func onAccent(_ n: String) -> Color { n == "white" ? .black : .white }
     static func bg(_ n: String) -> Color { backgrounds.first { $0.0 == n }?.1 ?? .black }
 }
 
-extension View {
-    func pill(active: Bool = false) -> some View {
-        self.font(.callout.weight(.medium))
+/// Foreground that contrasts with the accent color (for labels drawn on an accent-colored background).
+struct OnAccent: ViewModifier {
+    @AppStorage("accent") private var name = "red"
+    func body(content: Content) -> some View { content.foregroundColor(Theme.onAccent(name)) }
+}
+
+struct PillStyle: ViewModifier {
+    @AppStorage("accent") private var name = "red"
+    let active: Bool
+    func body(content: Content) -> some View {
+        content.font(.callout.weight(.medium))
+            .foregroundColor(active ? Theme.onAccent(name) : nil)
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(active ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.1)))
             .clipShape(Capsule())
     }
+}
+
+extension View {
+    /// Thin white outline that follows the rounded corners (posters, episode thumbnails, preview card).
+    func thinBorder(_ radius: CGFloat) -> some View {
+        overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(0.85), lineWidth: 1))
+    }
+    func pill(active: Bool = false) -> some View { modifier(PillStyle(active: active)) }
+    func onAccent() -> some View { modifier(OnAccent()) }
     func circleButton() -> some View {
         self.font(.title3).frame(width: 44, height: 44)
             .background(Color.white.opacity(0.14)).clipShape(Circle())
@@ -54,6 +74,7 @@ func parseDate(_ s: String?) -> Date? {
 
 struct RootView: View {
     @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
     var body: some View {
         ZStack {
             // Hide (but keep) the screen under the player: AppKit controls such as spinners
@@ -61,11 +82,15 @@ struct RootView: View {
             Group { if emby.loggedIn { HomeView() } else { LoginView() } }
                 .opacity(emby.playing == nil ? 1 : 0)
                 .allowsHitTesting(emby.playing == nil)
+            HoverCardLayer()
             if let req = emby.playing {
                 PlayerView(req: req).id(req.id).zIndex(10)
             }
         }
-        .onChange(of: emby.playing?.id) { _, id in PlaybackFlag.shared.active = id != nil }
+        .onChange(of: emby.playing?.id) { _, id in
+            PlaybackFlag.shared.active = id != nil
+            if id != nil { HoverCardCenter.shared.hide() }
+        }
     }
 }
 
@@ -159,7 +184,7 @@ struct LoginView: View {
             Button(action: go) {
                 HStack {
                     if busy { Spinner().controlSize(.small) }
-                    Text("Sign In").bold()
+                    Text("Sign In").bold().onAccent()
                 }.frame(maxWidth: .infinity).padding(8)
             }.buttonStyle(.borderedProminent).disabled(busy || server.isEmpty || user.isEmpty)
         }
@@ -195,14 +220,37 @@ struct LoginView: View {
 
 // MARK: - Sidebar shell + search
 
+/// Lets a click on an already-selected sidebar row act (a List only reports *changes* of selection).
+/// The tap gesture is switched on ONLY for the row that is already selected: a gesture on a row that is
+/// not selected yet swallows the first click on macOS, so that row would need several clicks to select.
+struct RootTap: ViewModifier {
+    let id: String
+    let sel: String
+    let action: () -> Void
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { action() },
+                                 including: sel == id ? .all : .subviews)
+    }
+}
+
 struct HomeView: View {
     @EnvironmentObject var emby: Emby
-    @State private var sel = "home"
-    @State private var activeCount = 0
+    @Environment(\.appBG) var bg
+    // Shared with the title bar (Top bar layout puts the navigation buttons in the window's toolbar)
+    @ObservedObject private var nav = NavState.shared
+    var sel: String { get { nav.sel } nonmutating set { nav.sel = newValue } }
+    var query: String { get { nav.query } nonmutating set { nav.query = newValue } }
+    var activeCount: Int { nav.activeCount }
+    var selB: Binding<String> { Binding(get: { nav.sel }, set: { nav.sel = $0 }) }
+    var queryB: Binding<String> { Binding(get: { nav.query }, set: { nav.query = $0 }) }
+    var showSettingsB: Binding<Bool> { Binding(get: { nav.showSettings }, set: { nav.showSettings = $0 }) }
     @State private var path = NavigationPath()
-    @State private var query = ""
-    @State private var showSettings = false
+    @State private var titleBarH: CGFloat = 0
     @State private var reloadToken = 0
+    @AppStorage("navStyle") private var navStyle = "sidebar"   // Settings → General → Appearance: "sidebar" or "topbar"
 
     func icon(_ lib: LibPref) -> String {
         switch lib.kind {
@@ -215,17 +263,33 @@ struct HomeView: View {
         }
     }
 
-    var body: some View {
+    /// Clicking the sidebar item you are already on (e.g. Movies while browsing actors and titles) goes back
+    /// to that page's start. Picking a different item does the same through the onChange below.
+    func popToRoot() {
+        path = NavigationPath()
+        query = ""
+    }
+
+    /// Keeps `titleBarH` equal to the window's title bar height (0 in full screen).
+    func updateTitleBarH() {
+        guard let w = NSApp.keyWindow ?? NSApp.mainWindow, !w.styleMask.contains(.fullScreen) else { titleBarH = 0; return }
+        let h = max(0, w.frame.height - w.contentLayoutRect.height)
+        if abs(h - titleBarH) > 0.5 { titleBarH = h }
+    }
+
+    var splitLayout: some View {
         NavigationSplitView {
-            List(selection: $sel) {
-                Label("Home", systemImage: "house.fill").tag("home")
-                Label("Favorites", systemImage: "heart.fill").tag("favorites")
+            List(selection: selB) {
+                Label("Home", systemImage: "house.fill").foregroundStyle(.tint).modifier(RootTap(id: "home", sel: sel, action: popToRoot)).tag("home")
+                Label("Favorites", systemImage: "heart.fill").foregroundStyle(.tint).modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
                 Label("Now Playing", systemImage: "dot.radiowaves.left.and.right")
+                    .foregroundStyle(.tint)
+                    .modifier(RootTap(id: "nowplaying", sel: sel, action: popToRoot))
                     .badge(activeCount)
                     .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
                 Section("My Media") {
                     ForEach(emby.libs.filter { $0.visible }) { lib in
-                        Label(lib.title, systemImage: icon(lib)).tag(lib.id)
+                        Label(lib.title, systemImage: icon(lib)).foregroundStyle(.tint).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
                     }
                 }
             }
@@ -258,16 +322,32 @@ struct HomeView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 12) {
-                    Button { showSettings = true } label: {
+                    Button { nav.showSettings = true } label: {
                         Label("Settings", systemImage: "gearshape").font(.callout)
                             .padding(.horizontal, 8).padding(.vertical, 8).contentShape(Rectangle())
                     }
                     .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
                     Spacer()
-                    Button("Sign Out") { emby.logout() }.font(.caption).foregroundColor(.secondary)
                 }.buttonStyle(.plain).padding(10)
             }
+            // Sidebar in the chosen background color instead of the system gray. The color stops below the
+            // title bar, so the strip behind the window buttons keeps the same gray as the rest of the title bar.
+            .scrollContentBackground(.hidden)
+            .background(bg, ignoresSafeAreaEdges: [])
+            // Strip behind the window buttons in exactly the gray of the rest of the title bar
+            .overlay(alignment: .top) {
+                Color(red: 41 / 255, green: 42 / 255, blue: 42 / 255)
+                    .frame(height: titleBarH).offset(y: -titleBarH).allowsHitTesting(false)
+            }
         } detail: {
+            detailPane(withSearch: true)
+        }
+    }
+
+    /// The page area (search results, home, libraries, detail pages) shared by both navigation styles.
+    func detailPane(withSearch: Bool) -> some View {
+        VStack(spacing: 0) {
+            if withSearch { SearchBar(query: queryB) }
             NavigationStack(path: $path) {
                 Group {
                     if !query.isEmpty { SearchView(query: query) }
@@ -280,18 +360,167 @@ struct HomeView: View {
                 .navigationDestination(for: Item.self) { DetailView(item: $0) }
                 .navigationDestination(for: PersonRef.self) { PersonView(person: $0) }
             }
-            .safeAreaInset(edge: .top, spacing: 0) { SearchBar(query: $query) }
+            // Back button in the title bar, left of the window title, on every page
+            .toolbar { TitleBarItems(back: nil) }   // top-level pages: no Back (pushed pages add their own)
+            .hideToolbarTitle()
+        }
+    }
+
+    // MARK: Top bar navigation (Settings → General → Appearance → Navigation)
+
+    /// Top bar layout: the navigation lives in the window's toolbar (see TitleBarItems), so the page area is all that is left here.
+    var topLayout: some View {
+        detailPane(withSearch: false).background(bg)
+    }
+
+    var body: some View {
+        Group {
+            if navStyle == "topbar" { topLayout } else { splitLayout }
         }
         .task { await emby.loadLibs() }
+        .onAppear { updateTitleBarH(); nav.popToRoot = { path = NavigationPath(); nav.query = "" } }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in updateTitleBarH() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in updateTitleBarH() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in titleBarH = 0 }
         .task {
             // Keep the sidebar's Now Playing count fresh
             while !Task.isCancelled {
-                activeCount = await emby.nowPlaying().count
+                nav.activeCount = await emby.nowPlaying().count
                 try? await Task.sleep(for: .seconds(20))
             }
         }
         .onChange(of: sel) { path = NavigationPath(); query = "" }
-        .sheet(isPresented: $showSettings) { SettingsView { reloadToken += 1 } }
+        .onChange(of: emby.openRequest) { _, item in
+            guard let item else { return }
+            path.append(item)
+            emby.openRequest = nil
+        }
+        .sheet(isPresented: showSettingsB) { SettingsView { reloadToken += 1 } }
+    }
+}
+
+/// Back button for the bar above top-level pages. Light fill and outline so it shows on every background color
+/// (the dark pill used over video disappears on a black background).
+/// Title bar contents: just the optional Back button on the left (no app name).
+/// State shared between the page area and the title bar's navigation buttons.
+final class NavState: ObservableObject {
+    static let shared = NavState()
+    @Published var sel = "home"
+    @Published var query = ""
+    @Published var searchOpen = false
+    @Published var activeCount = 0
+    @Published var showSettings = false
+    var popToRoot: () -> Void = {}
+}
+
+/// Window toolbar contents: the Back pill on pushed pages and, with the Top bar layout, the navigation
+/// buttons, search and Settings (living in the title bar they stay clickable on every page).
+struct TitleBarItems: ToolbarContent {
+    let back: (() -> Void)?
+    /// The navigation buttons come from the first page's toolbar only: pushed pages' toolbars are merged with it,
+    /// so repeating them there showed everything twice.
+    var topBar: Bool { back == nil && UserDefaults.standard.string(forKey: "navStyle") == "topbar" }
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 14) {
+                if let back {
+                    // In the Top bar layout the EMBYFLIX name sits right before the pill: leave some air between them
+                    TopBackButton(action: back)
+                        .padding(.leading, UserDefaults.standard.string(forKey: "navStyle") == "topbar" ? 16 : 0)
+                }
+                if topBar { Text("EMBYFLIX").font(.system(size: 16, weight: .black)).foregroundStyle(.tint) }
+            }
+        }
+        ToolbarItem(placement: .principal) {
+            if topBar { TopNavButtons() }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            if topBar { TopNavTools() }
+        }
+    }
+}
+
+struct TopNavButtons: View {
+    @EnvironmentObject var emby: Emby
+    @ObservedObject private var nav = NavState.shared
+    func item(_ title: String, _ id: String, badge: Int = 0) -> some View {
+        let on = nav.sel == id
+        return Button {
+            nav.query = ""; nav.searchOpen = false
+            nav.sel = id; nav.popToRoot()
+        } label: {
+            Text(badge > 0 ? "\(title) \(badge)" : title)
+                .font(.callout.weight(on ? .semibold : .regular))
+                .foregroundColor(on ? .black : .primary)
+                .padding(.horizontal, 14).padding(.vertical, 5)
+                .background(Capsule().fill(on ? Color.white : Color.clear))
+                .contentShape(Capsule())
+        }.buttonStyle(.plain)
+    }
+    var body: some View {
+        HStack(spacing: 4) {
+            item("Home", "home")
+            item("Favorites", "favorites")
+            item("Now Playing", "nowplaying", badge: nav.activeCount)
+            ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
+        }
+    }
+}
+
+struct TopNavTools: View {
+    @ObservedObject private var nav = NavState.shared
+    var body: some View {
+        HStack(spacing: 8) {
+            if nav.searchOpen {
+                HStack(spacing: 6) {
+                    TextField("Search movies, shows, people", text: $nav.query).textFieldStyle(.plain).frame(width: 220)
+                    if !nav.query.isEmpty {
+                        Button { nav.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundColor(.secondary) }
+                            .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Color.white.opacity(0.1)).clipShape(Capsule())
+            }
+            Button { nav.searchOpen.toggle(); if !nav.searchOpen { nav.query = "" } } label: {
+                Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .semibold)).padding(6).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Search")
+            Button { nav.showSettings = true } label: {
+                Image(systemName: "gearshape.fill").font(.system(size: 14)).padding(6).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
+        }
+    }
+}
+
+/// Removes the toolbar's default left-aligned title (`ToolbarDefaultItemKind.title` needs macOS 15).
+struct HideToolbarTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) { content.toolbar(removing: .title) } else { content }
+    }
+}
+extension View { func hideToolbarTitle() -> some View { modifier(HideToolbarTitle()) } }
+
+struct TopBackButton: View {
+    @EnvironmentObject var emby: Emby
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left").font(.system(size: 13, weight: .bold))
+                Text("Back").font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background(Capsule().fill(Color.white.opacity(hover ? 0.28 : 0.18)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.5), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .keyboardShortcut("[", modifiers: .command)
+        .help("Back (⌘[)")
+        .disabled(emby.playing != nil)
     }
 }
 
@@ -456,7 +685,8 @@ struct FavoriteGridView: View {
         .background(bg)
         .navigationTitle(title)
         .navigationBarBackButtonHidden(true)
-        .toolbar { ToolbarItem(placement: .navigation) { BackPill(compact: true) { dismiss() } } }
+        .toolbar { TitleBarItems(back: { dismiss() }) }
+        .hideToolbarTitle()
         .task {
             let all = await emby.favorites()
             let set = Set(ids)
@@ -609,7 +839,8 @@ struct PersonView: View {
         .background(bg)
         .navigationTitle(person.name)
         .navigationBarBackButtonHidden(true)
-        .toolbar { ToolbarItem(placement: .navigation) { BackPill(compact: true) { dismiss() } } }
+        .toolbar { TitleBarItems(back: { dismiss() }) }
+        .hideToolbarTitle()
         .task {
             async let list = emby.itemsWithPerson(person.id)
             async let me = emby.person(person.id)
@@ -698,6 +929,15 @@ struct HomeContent: View {
     }
 }
 
+extension View {
+    /// Black outline around text (four hairline shadows plus a soft one) so it reads on any picture.
+    func blackOutline(_ w: CGFloat = 1) -> some View {
+        self.shadow(color: .black, radius: 0, x: w, y: 0).shadow(color: .black, radius: 0, x: -w, y: 0)
+            .shadow(color: .black, radius: 0, x: 0, y: w).shadow(color: .black, radius: 0, x: 0, y: -w)
+            .shadow(color: .black.opacity(0.7), radius: 4)
+    }
+}
+
 struct Hero: View {
     @EnvironmentObject var emby: Emby
     let items: [Item]
@@ -717,10 +957,10 @@ struct Hero: View {
             Backdrop(id: item.backdropId ?? item.Id).frame(height: 440).frame(maxWidth: .infinity).clipped()
                 .id("b" + item.id).transition(.opacity)
             VStack(alignment: .leading, spacing: 14) {
-                Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2)
+                Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2).blackOutline(2)
                 if item.SeriesName != nil {
                     Text("S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)  \(item.Name)")
-                        .font(.headline).foregroundColor(.white.opacity(0.8))
+                        .font(.headline).foregroundColor(.white).blackOutline()
                 }
                 HStack(spacing: 12) {
                     ForEach(meta(item), id: \.self) { Text($0) }
@@ -728,9 +968,9 @@ struct Hero: View {
                         HStack(spacing: 3) { Image(systemName: "star.fill"); Text(String(format: "%.1f", r)) }
                             .foregroundColor(.yellow)
                     }
-                }.font(.subheadline).foregroundColor(.white.opacity(0.85))
+                }.font(.subheadline).foregroundColor(.white).blackOutline()
                 Text(item.Overview ?? "").font(.body).lineLimit(3).frame(maxWidth: 620, alignment: .leading)
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(.white).blackOutline()
                 HStack(spacing: 12) {
                     Button { Task { await emby.play(item) } } label: {
                         Label("Play", systemImage: "play.fill").font(.system(size: 16, weight: .bold))
@@ -748,6 +988,8 @@ struct Hero: View {
                             let on = i == index % items.count
                             Capsule().fill(on ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.4)))
                                 .frame(width: on ? 22 : 8, height: 4)
+                                .overlay(Capsule().stroke(Color.black, lineWidth: 1))
+                                .shadow(color: .black.opacity(0.7), radius: 3)
                                 .contentShape(Rectangle().inset(by: -6))
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.8)) { index = i } }
                         }
@@ -756,7 +998,6 @@ struct Hero: View {
             }
             .padding(.horizontal, 44).padding(.vertical, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.black.opacity(0.55))
             .id("t" + item.id).transition(.opacity)
         }
         .frame(height: 440)
@@ -789,13 +1030,24 @@ struct ResumeCard: View {
         if item.isEpisode { return "S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)" + (timeLeft.map { " · " + $0 } ?? "") }
         return timeLeft
     }
+    /// Card click: an episode opens its series page on that episode's season; a movie opens its own page.
+    func openPage() {
+        guard item.isEpisode, let sid = item.SeriesId else { emby.openRequest = item; return }
+        Task {
+            if let series = await emby.itemRecord(sid) {
+                emby.openSeason = item.ParentIndexNumber
+                emby.openRequest = series
+            }
+        }
+    }
+
     /// Episodes have a landscape primary image; movies use their backdrop.
     var imageURL: URL? {
         item.isEpisode ? emby.image(item.Id, width: 520, plain: true) : emby.image(item.backdropId ?? item.Id, "Backdrop", width: 520)
     }
 
     var body: some View {
-        Button { Task { await emby.play(item) } } label: {
+        Group {
             VStack(alignment: .leading, spacing: 6) {
                 AsyncImage(url: imageURL) { p in
                     p.resizable().aspectRatio(contentMode: .fill)
@@ -803,29 +1055,47 @@ struct ResumeCard: View {
                     ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
                 }
                 .frame(width: 260, height: 146).clipped()
-                .overlay(alignment: .bottom) {
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(Color.white.opacity(0.25))
-                            Rectangle().fill(.tint).frame(width: g.size.width * progress)
-                        }
-                    }.frame(height: 4)
+                // Title, bottom-left
+                .overlay(alignment: .bottomLeading) {
+                    Text(item.heroTitle)
+                        .font(.callout.weight(.semibold)).foregroundColor(.white).lineLimit(1)
+                        .shadow(color: .black.opacity(0.8), radius: 3)
+                        .padding(.leading, 10).padding(.trailing, 40).padding(.top, 28).padding(.bottom, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
                 }
+                // Series info (S3·E3 · 42m left), top-left
+                .overlay(alignment: .topLeading) {
+                    if let subtitle {
+                        Text(subtitle).font(.caption2.weight(.semibold)).foregroundColor(.white)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(Capsule().fill(Color.black.opacity(0.35)))
+                            .padding(8)
+                    }
+                }
+                // White progress ring, bottom-right
+                .overlay(alignment: .bottomTrailing) {
+                    if progress > 0 && progress < 1 { ProgressRing(progress: progress).padding(.trailing, 10).padding(.bottom, 10) }
+                }
+                // Play button: resumes playback; clicking anywhere else on the card opens the page
                 .overlay {
                     if hover {
-                        Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundColor(.white)
-                            .shadow(radius: 6)
+                        Button { Task { await emby.play(item) } } label: {
+                            Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundColor(.white)
+                                .shadow(radius: 6)
+                        }.buttonStyle(.plain).help("Resume")
                     }
                 }
                 .cornerRadius(8)
-                Text(item.heroTitle).font(.callout.weight(.semibold)).lineLimit(1)
-                if let subtitle { Text(subtitle).font(.caption).foregroundColor(.secondary).lineLimit(1) }
+                .thinBorder(8)
+                .hoverLift()
             }
             .frame(width: 260, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { hover = $0 }
+            .onTapGesture { openPage() }
             .help(item.isEpisode ? "\(item.heroTitle) — \(item.Name)" : item.Name)
-        }.buttonStyle(.plain)
+        }
     }
 }
 
@@ -848,20 +1118,7 @@ struct PosterCard: View {
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
     var centered: Bool { labelAlign == "center" }
-    @State private var preview = false      // Netflix-style card after resting on the poster
-    @State private var overPreview = false
-    @State private var hoverTask: Task<Void, Never>?
-
-    /// Opens the preview after ~0.7 s on the poster; closes shortly after the pointer leaves poster and card.
-    func hoverChanged() {
-        hoverTask?.cancel()
-        let inside = hover || overPreview
-        hoverTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(inside ? 700 : 250))
-            if Task.isCancelled { return }
-            preview = hover || overPreview
-        }
-    }
+    @State private var ptr = PointerBox()    // pointer position on the poster (read lazily, no redraws)
     var body: some View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
@@ -888,6 +1145,28 @@ struct PosterCard: View {
                     }
                 }
                 .cornerRadius(8)
+                .thinBorder(8)
+                // The Netflix-style preview card is drawn by HoverCardLayer (window level), centered on this poster.
+                // Local + global pointer positions together give the poster's place in the window.
+                .onContinuousHover(coordinateSpace: .local) { phase in
+                    if case .active(let p) = phase { ptr.local = p }
+                }
+                .onContinuousHover(coordinateSpace: .global) { phase in
+                    switch phase {
+                    case .active(let p):
+                        ptr.global = p
+                        if !ptr.inside {
+                            ptr.inside = true
+                            let box = ptr
+                            HoverCardCenter.shared.posterHover(item, inside: true) {
+                                CGRect(x: box.global.x - box.local.x, y: box.global.y - box.local.y, width: 150, height: 225)
+                            }
+                        }
+                    case .ended:
+                        ptr.inside = false
+                        HoverCardCenter.shared.posterHover(item, inside: false) { .zero }
+                    }
+                }
                 .modifier(HoverLift(hover: hover))
                 if showTitle || showYear {
                     VStack(alignment: centered ? .center : .leading, spacing: 2) {
@@ -900,13 +1179,175 @@ struct PosterCard: View {
             }
             .frame(width: 150, alignment: .leading)
             .contentShape(Rectangle())
-            .onHover { hover = $0; hoverChanged() }
+            .onHover { hover = $0 }
             .zIndex(hover ? 1 : 0)
-            .popover(isPresented: $preview, arrowEdge: .trailing) {
-                HoverPreview(item: item) { preview = false }
-                    .onHover { overPreview = $0; hoverChanged() }
-            }
         }.buttonStyle(.plain)
+    }
+}
+
+/// Pointer position on a poster in its own and in window coordinates (a class: writes don't redraw the poster).
+final class PointerBox {
+    var local = CGPoint.zero
+    var global = CGPoint.zero
+    var inside = false
+}
+
+/// Decides which poster's preview card is showing. Opens ~0.7 s after the pointer rests on a poster and stays
+/// while the pointer is on the poster or on the card; closes ~0.3 s after it leaves both. Never while a video is
+/// playing (the page behind the player is still alive). Closing is decided by polling the real pointer position,
+/// so it doesn't depend on hover enter/exit events firing for a card that appears right under a resting pointer.
+@MainActor
+final class HoverCardCenter: ObservableObject {
+    static let shared = HoverCardCenter()
+    @Published var item: Item?
+    @Published var anchor: CGRect = .zero        // the poster's frame in window coordinates
+    var cardRect: CGRect = .zero                 // the card's frame in window coordinates (set by HoverCardLayer)
+    private var overPoster: Item?
+    private var anchorFor: (() -> CGRect)?
+    private var openTask: Task<Void, Never>?
+    private var watchTask: Task<Void, Never>?
+
+    /// Settings → Libraries → Hover preview
+    private var enabled: Bool { UserDefaults.standard.object(forKey: "hoverPreviewEnabled") as? Bool ?? true }
+    private var openDelayMs: Int {
+        let d = UserDefaults.standard.double(forKey: "hoverPreviewDelay")      // seconds; unset = 0.7
+        return Int((d > 0 ? d : 0.7) * 1000)
+    }
+
+    func posterHover(_ it: Item, inside: Bool, anchorProvider: @escaping () -> CGRect) {
+        if inside { overPoster = it; anchorFor = anchorProvider }
+        else if overPoster?.id == it.id { overPoster = nil }
+        openTask?.cancel()
+        guard inside, enabled, !PlaybackFlag.shared.active, item?.id != it.id else { return }
+        openTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(openDelayMs))   // same delay for every poster
+            if Task.isCancelled || PlaybackFlag.shared.active { return }
+            guard overPoster?.id == it.id, let a = anchorFor?() else { return }
+            item = it
+            anchor = a
+            startWatching()
+        }
+    }
+
+    /// Closes everything (Play pressed, playback started).
+    func hide() {
+        openTask?.cancel(); watchTask?.cancel()
+        item = nil; overPoster = nil
+    }
+
+    /// Closes just the card because the pointer left it. A card that is already waiting to open for the poster
+    /// under the pointer must survive this (it used to be cancelled here, so the poster you moved onto never opened).
+    private func closeCard() {
+        watchTask?.cancel()
+        item = nil
+    }
+
+    private func startWatching() {
+        watchTask?.cancel()
+        watchTask = Task { @MainActor in
+            var away = 0
+            while !Task.isCancelled && item != nil {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+                if PlaybackFlag.shared.active { hide(); return }
+                away = pointerInside() ? 0 : away + 1
+                if away >= 3 { closeCard(); return }
+            }
+        }
+    }
+
+    /// Is the pointer over the poster or the card? (window coordinates with the origin at the top-left, like SwiftUI's .global)
+    private func pointerInside() -> Bool {
+        guard let w = NSApp.keyWindow ?? NSApp.mainWindow, let v = w.contentView else { return false }
+        let m = w.mouseLocationOutsideOfEventStream
+        let pt = CGPoint(x: m.x, y: v.bounds.height - m.y)
+        return anchor.insetBy(dx: -4, dy: -4).contains(pt) || cardRect.insetBy(dx: -4, dy: -4).contains(pt)
+    }
+}
+
+private struct CardHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 340
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// Window-level layer that draws the preview card centered on the hovered poster (kept inside the window),
+/// above every row and column, so nothing clips or covers it.
+/// The card zooms out of the middle of the poster when it opens and back into it when it closes
+/// (Settings → Libraries → Hover preview: zoom on/off and duration).
+struct HoverCardLayer: View {
+    @ObservedObject private var center = HoverCardCenter.shared
+    @AppStorage("hoverZoomEnabled") private var zoomOn = true
+    @AppStorage("hoverZoomDuration") private var zoomDur = 0.3
+    @AppStorage("hoverZoomStyle") private var zoomStyle = "spring"      // "smooth" | "spring"
+    @State private var cardH: CGFloat = 340
+    // The card stays on screen while it zooms back in, so the layer keeps its own copy of what it shows
+    @State private var shownItem: Item?
+    @State private var shownAnchor: CGRect = .zero
+    @State private var open = false
+    @State private var removeTask: Task<Void, Never>?
+
+    var body: some View {
+        GeometryReader { g in
+            if let it = shownItem {
+                let o: CGPoint = g.frame(in: .global).origin
+                let w: CGFloat = 320
+                let cx: CGFloat = shownAnchor.midX - o.x
+                let cy: CGFloat = shownAnchor.midY - o.y
+                let left: CGFloat = min(max(8, cx - w / 2), max(8, g.size.width - w - 8))
+                let top: CGFloat = min(max(8, cy - cardH / 2), max(8, g.size.height - cardH - 8))
+                let rect = CGRect(x: o.x + left, y: o.y + top, width: w, height: cardH)
+                // The card pivots on the poster's center and shrinks to poster size when it is not open
+                let ux: CGFloat = min(max((shownAnchor.midX - rect.minX) / w, 0), 1)
+                let uy: CGFloat = min(max((shownAnchor.midY - rect.minY) / cardH, 0), 1)
+                HoverPreview(item: it) { center.hide() }
+                    .frame(width: w)
+                    .background(GeometryReader { c in Color.clear.preference(key: CardHeightKey.self, value: c.size.height) })
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .thinBorder(12)
+                    .shadow(color: .black.opacity(0.6), radius: 24)
+                    .scaleEffect(open ? 1 : 150 / w, anchor: UnitPoint(x: ux, y: uy))
+                    .opacity(open ? 1 : 0)
+                    .animation(zoomOn ? zoomAnimation : nil, value: open)
+                    .allowsHitTesting(open)
+                    .onAppear { center.cardRect = rect }
+                    .onChange(of: rect) { _, r in center.cardRect = r }
+                    .offset(x: left, y: top)
+                    .id(it.id)
+            }
+        }
+        .onPreferenceChange(CardHeightKey.self) { cardH = $0 }
+        .onChange(of: center.item?.id) { _, _ in sync() }
+    }
+
+    /// Smooth ease, or a spring with a small bounce; the same one is used for opening and closing.
+    private var zoomAnimation: Animation {
+        zoomStyle == "spring" ? .spring(response: zoomDur, dampingFraction: 0.82) : .easeInOut(duration: zoomDur)
+    }
+
+    /// Follows the hover center: a new poster zooms its card out, a closed card zooms back in and is then removed.
+    private func sync() {
+        removeTask?.cancel()
+        if let it = center.item {
+            if shownItem?.id != it.id {
+                shownItem = it
+                shownAnchor = center.anchor
+                if zoomOn {
+                    open = false
+                    DispatchQueue.main.async { open = true }   // next tick, so the change animates from poster size
+                } else {
+                    open = true
+                }
+            } else {
+                open = true
+            }
+        } else {
+            open = false
+            let wait: Double = zoomOn ? (zoomStyle == "spring" ? zoomDur * 1.4 : zoomDur) : 0   // a spring settles a bit later
+            removeTask = Task { @MainActor in
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                if !Task.isCancelled { shownItem = nil }
+            }
+        }
     }
 }
 
@@ -985,6 +1426,35 @@ struct CountBadge: View {
 }
 
 /// Top-right poster badge: green check when watched, unwatched-episode count for series.
+/// Small white progress ring (how much of the episode you have watched), for the corner of a thumbnail.
+struct ProgressRing: View {
+    let progress: Double      // 0...1
+    var size: CGFloat = 22
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.white.opacity(0.35), lineWidth: 2.5)
+            Circle().trim(from: 0, to: CGFloat(min(1, max(0.03, progress))))
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.6), radius: 3)
+    }
+}
+
+/// Thin progress line along the bottom edge of a thumbnail (accent color, dim track).
+struct EdgeProgressBar: View {
+    let progress: Double      // 0...1
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.black.opacity(0.5))
+                Rectangle().fill(.tint).frame(width: g.size.width * CGFloat(min(1, max(0, progress))))
+            }
+        }.frame(height: 3)
+    }
+}
+
 struct WatchBadge: View {
     let item: Item
     let played: Bool
@@ -1408,7 +1878,13 @@ struct DetailView: View {
     @State private var seasonItems: [Item] = []
     @State private var epLangs: [(code: String, name: String)] = []
     @AppStorage("episodeSubLang") private var epSubLang = ""
+    @AppStorage("subAlways") private var subAlwaysOn = false
+    @AppStorage("subLang") private var prefSubLang = "english"
+    /// First entry of the Subtitles menu: the preferred language when that setting is on, otherwise Off.
+    var defaultSubLabel: String { subAlwaysOn ? prefSubLang.capitalized : "Off" }
     @AppStorage("episodeLayout") private var epLayout = "list"
+    @AppStorage("showEpisodeDescription") private var showEpDesc = true   // Settings → Libraries → Series
+    @State private var showAllEps = false                                  // "Show all" / "Hide watched" in a season
     @State private var similar: [Item] = []
     @State private var srcIdx = 0
     @State private var audioIdx = -1
@@ -1484,6 +1960,7 @@ struct DetailView: View {
                 async let eps = emby.episodes(item.id)
                 async let ss = emby.seasons(item.id)
                 kids = await eps; seasonItems = await ss
+                if let s = emby.openSeason { season = s; emby.openSeason = nil }
                 nextEp = await emby.nextUp(item.id) ?? kids.first { !emby.isPlayed($0) } ?? kids.first
                 if let first = kids.first { epLangs = Self.subLangs(await emby.full(first.id)) }
             }
@@ -1491,8 +1968,10 @@ struct DetailView: View {
             if !item.isEpisode { similar = await emby.similar(item.id) }
         }
         .onChange(of: srcIdx) { audioIdx = defaultAudio; subIdx = -1; applyPreferredSub() }
+        .onChange(of: season) { showAllEps = false }
         .navigationBarBackButtonHidden(true)
-        .toolbar { ToolbarItem(placement: .navigation) { BackPill(compact: true) { dismiss() } } }
+        .toolbar { TitleBarItems(back: { dismiss() }) }
+        .hideToolbarTitle()
     }
 
     // Header: poster + info + pickers + buttons
@@ -1634,15 +2113,22 @@ struct DetailView: View {
         let q = UserDefaults.standard.integer(forKey: "defaultQuality")
         let maxBitrate: Int? = q > 0 ? q : nil
         let start: Double = from ?? emby.resumeAt(ep)
-        if epSubLang.isEmpty { emby.playing = PlayRequest(item: ep, maxBitrate: maxBitrate, start: start); return }
+        // Subtitles menu: "off" = explicitly none; empty = the default (the preferred language from Settings when
+        // "Always load preferred subtitle language" is on, ignoring what was remembered for the series); else a language
+        let d = UserDefaults.standard
+        if epSubLang == "off" { emby.playing = PlayRequest(item: ep, maxBitrate: maxBitrate, start: start, noSub: true); return }
+        let preferred: String = d.bool(forKey: "subAlways") ? (d.string(forKey: "subLang") ?? "").lowercased() : ""
+        let wanted: String = epSubLang.isEmpty ? preferred : epSubLang
+        if wanted.isEmpty { emby.playing = PlayRequest(item: ep, maxBitrate: maxBitrate, start: start); return }
         Task {
             let f = await emby.full(ep.id)
             let src = f?.MediaSources?.first
-            let subs = (src?.MediaStreams ?? []).filter {
-                $0.`Type` == "Subtitle" && Self.langName($0).lowercased() == epSubLang }
+            let all = src?.MediaStreams ?? []
+            let subs = all.filter { $0.`Type` == "Subtitle" && Self.langName($0).lowercased() == wanted }
             let text = ["srt", "subrip", "vtt", "ass", "ssa"]
-            let pick = subs.first { text.contains(($0.Codec ?? "").lowercased()) } ?? subs.first
-            emby.playing = PlayRequest(item: ep, sourceId: src?.Id, sub: pick?.Index, maxBitrate: maxBitrate, start: start)
+            var pick = (subs.first { text.contains(($0.Codec ?? "").lowercased()) } ?? subs.first)?.Index
+            if pick == nil { pick = preferredSub(all, lang: wanted) }
+            emby.playing = PlayRequest(item: ep, sourceId: src?.Id, sub: pick, maxBitrate: maxBitrate, start: start)
         }
     }
 
@@ -1666,6 +2152,23 @@ struct DetailView: View {
         return seasonItems.first { ($0.IndexNumber ?? 0) == n }?.Name ?? "Season \(n)"
     }
 
+    /// All episodes of the season being shown.
+    var seasonEpisodes: [Item] { kids.filter { ($0.ParentIndexNumber ?? 0) == currentSeason } }
+
+    /// The season has both watched and unwatched episodes, so "hide watched" makes sense.
+    var canFilterWatched: Bool {
+        let all: [Item] = seasonEpisodes
+        let open: Int = all.filter { !emby.isPlayed($0) }.count
+        return open > 0 && open < all.count
+    }
+
+    /// Unwatched episodes only, unless the season is fully watched / fully unwatched or "Show all" is on.
+    var shownEpisodes: [Item] {
+        let all: [Item] = seasonEpisodes
+        if canFilterWatched && !showAllEps { return all.filter { !emby.isPlayed($0) } }
+        return all
+    }
+
     /// Unwatched episodes in a season (nil while episodes are loading).
     func unwatched(_ n: Int) -> Int? {
         let eps = kids.filter { ($0.ParentIndexNumber ?? 0) == n }
@@ -1685,7 +2188,7 @@ struct DetailView: View {
                 }
                 .frame(width: 170, height: 255).clipped().cornerRadius(8)
                 .overlay(alignment: .topTrailing) { CountBadge(count: unwatched(n)).padding(8) }
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: selected ? 3 : 0))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(selected ? 1 : 0.85), lineWidth: selected ? 3 : 1))
                 .shadow(radius: 6)
                 .hoverLift()
                 Text(title).font(.body).foregroundColor(selected ? .primary : .secondary)
@@ -1705,12 +2208,17 @@ struct DetailView: View {
         let heading: String = multi ? seasonTitle(currentSeason) : "Episodes"
         return HStack(spacing: 16) {
             Text(heading).font(.title3.bold())
+            if canFilterWatched {
+                Button(showAllEps ? "Hide watched" : "Show all") { showAllEps.toggle() }
+                    .buttonStyle(.plain).font(.callout.weight(.semibold)).foregroundStyle(.tint)
+            }
             Spacer()
             episodeLayoutToggle
             if !epLangs.isEmpty {
                 Text("Subtitles").foregroundColor(.secondary)
                 Picker("", selection: $epSubLang) {
-                    Text("Off").tag("")
+                    Text(defaultSubLabel).tag("")
+                    if subAlwaysOn { Text("Off").tag("off") }
                     ForEach(epLangs, id: \.code) { l in Text(l.name).tag(l.code) }
                 }.labelsHidden().fixedSize()
             }
@@ -1729,17 +2237,11 @@ struct DetailView: View {
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color(white: 0.15) }
                 .frame(width: 220, height: 124).clipped()
-                .overlay(alignment: .bottom) {
-                    if pct > 0, pct < 100, !played {
-                        GeometryReader { g in
-                            ZStack(alignment: .leading) {
-                                Rectangle().fill(Color.white.opacity(0.3))
-                                Rectangle().fill(.tint).frame(width: g.size.width * pct / 100)
-                            }
-                        }.frame(height: 4)
-                    }
+                .overlay(alignment: .bottomTrailing) {
+                    if pct > 0, pct < 100, !played { ProgressRing(progress: pct / 100).padding(8) }
                 }
                 .cornerRadius(6)
+                .thinBorder(6)
                 .hoverLift(play: 36)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
@@ -1748,7 +2250,7 @@ struct DetailView: View {
                         Spacer()
                         if let t = ep.RunTimeTicks, t > 0 { Text(runtimeText(t)).foregroundColor(.secondary) }
                     }
-                    Text(ep.Overview ?? "").lineLimit(3).font(.callout).foregroundColor(.secondary)
+                    if showEpDesc { Text(ep.Overview ?? "").lineLimit(3).font(.callout).foregroundColor(.secondary) }
                 }
             }
             .padding(.vertical, 14)
@@ -1765,8 +2267,7 @@ struct DetailView: View {
     }
 
     var episodesList: some View {
-        let cur: Int = currentSeason
-        let eps: [Item] = kids.filter { ($0.ParentIndexNumber ?? 0) == cur }
+        let eps: [Item] = shownEpisodes
         return VStack(alignment: .leading, spacing: 12) {
             if seasonNumbers.count > 1 { seasonRow }
             episodesHeader
@@ -1795,9 +2296,21 @@ struct DetailView: View {
         }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
     }
 
+
+    /// "S3·E3" plus " · 42m left" when the episode is partly watched.
+    func episodeInfo(_ ep: Item, hasProgress: Bool) -> String {
+        var t = "S\(ep.ParentIndexNumber ?? 0)·E\(ep.IndexNumber ?? 0)"
+        if hasProgress, let total = ep.RunTimeTicks, total > 0 {
+            let left = max(0, total - (ep.UserData?.PlaybackPositionTicks ?? 0))
+            t += " · " + runtimeText(left) + " left"
+        }
+        return t
+    }
+
     func episodeTile(_ ep: Item) -> some View {
         let played: Bool = emby.isPlayed(ep)
-        let label: String = "\(ep.IndexNumber ?? 0). \(ep.Name)"
+        let pct: Double = ep.UserData?.PlayedPercentage ?? 0
+        let hasProgress: Bool = pct > 0 && pct < 100 && !played
         return Button { playEpisode(ep) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topTrailing) {
@@ -1805,18 +2318,37 @@ struct DetailView: View {
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: { Color(white: 0.15) }
                     .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
-                    .clipped().cornerRadius(6)
+                    .clipped()
                     .opacity(played ? 0.6 : 1)
                     WatchBadge(item: ep, played: played).padding(6)
                 }
-                .overlay(alignment: .bottom) {
-                    if let pct = ep.UserData?.PlayedPercentage, pct > 0, pct < 100, !played {
-                        ProgressView(value: pct / 100).padding(.horizontal, 8).padding(.bottom, 6)
-                    }
+                // Episode name in the bottom-left corner of the thumbnail
+                .overlay(alignment: .bottomLeading) {
+                    Text(ep.Name).font(.system(size: 14, weight: .semibold)).foregroundColor(.white).lineLimit(2)
+                        .shadow(color: .black.opacity(0.8), radius: 3)
+                        .padding(.leading, 10).padding(.trailing, hasProgress ? 40 : 10)
+                        .padding(.top, 28).padding(.bottom, hasProgress ? 12 : 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LinearGradient(colors: [Color.clear, Color.black.opacity(0.75)],
+                                                   startPoint: .top, endPoint: .bottom))
                 }
+                // Episode number in the top-left corner
+                .overlay(alignment: .topLeading) {
+                    Text(episodeInfo(ep, hasProgress: hasProgress)).font(.caption2.weight(.semibold)).foregroundColor(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Capsule().fill(Color.black.opacity(0.35)))
+                        .padding(8)
+                }
+                // White progress ring in the bottom-right corner
+                .overlay(alignment: .bottomTrailing) {
+                    if hasProgress { ProgressRing(progress: pct / 100).padding(.trailing, 10).padding(.bottom, 12) }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .thinBorder(6)
                 .hoverLift(play: 40)
-                Text(label).font(.headline).lineLimit(1)
-                Text(ep.Overview ?? "").font(.caption).foregroundColor(.secondary).lineLimit(2)
+                if showEpDesc {
+                    Text(ep.Overview ?? "").font(.caption).foregroundColor(.secondary).lineLimit(2)
+                }
             }.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1988,7 +2520,8 @@ final class PlayerModel: ObservableObject {
         var req = req
         // Audio / subtitles remembered for this series
         if req.item.isEpisode, let sid = req.item.SeriesId, let m = SeriesLang.get(sid) {
-            if req.sub == nil, !req.noSub, let l = m["sub"] {
+            // (with "Always load preferred subtitle language" on, that setting wins over what was remembered for the series)
+            if req.sub == nil, !req.noSub, !UserDefaults.standard.bool(forKey: "subAlways"), let l = m["sub"] {
                 if l == "off" { req.noSub = true; self.req?.noSub = true }
                 else if let i = preferredSub(streams, lang: l) { req.sub = i; sub = i; self.req?.sub = i }
             }
@@ -2009,7 +2542,10 @@ final class PlayerModel: ObservableObject {
             req.sub = nil
             loadCues(emby, req.item.id, req.sourceId, s)
         }
-        guard let u = await emby.resolveStream(req, direct: direct) else {
+        await emby.killStaleEncodings()
+        // A stream that starts part-way through the file must not copy the video (see Emby.withoutVideoCopy)
+        let midFile = pendingSeek > 0
+        guard let u = await emby.resolveStream(req, direct: direct, reencode: midFile) else {
             error = "Couldn't get a stream from the server."; return
         }
         let method = u.absoluteString.contains("Static=true") ? "DirectPlay" : "Transcode"
@@ -2040,7 +2576,11 @@ final class PlayerModel: ObservableObject {
                                                     toleranceBefore: .zero, toleranceAfter: .zero)
                         }
                         self.updateCaption(self.now)
-                        self.dlog("resume to \(self.fmt(t)): player at \(self.fmt(self.now)) (\(self.session?.method ?? "?"))")
+                        self.dlog("resume to \(self.fmt(t)): player at \(self.fmt(self.now)) (\(self.session?.method ?? "?")), re-encode requested")
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: .seconds(5))
+                            self?.logServer()
+                        }
                     }
                     if !self.reportedStart, let ps = self.session {
                         self.reportedStart = true
@@ -2428,6 +2968,38 @@ struct PlayerView: View {
 
     var window: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
 
+    /// Height of the window's title bar while windowed (0 in full screen, where there is none).
+    var titleBarHeight: CGFloat {
+        guard !isFullScreen, let w = window, !w.styleMask.contains(.fullScreen) else { return 0 }
+        return max(0, w.frame.height - w.contentLayoutRect.height)
+    }
+    /// Color of the strip under the title bar. The system draws the bar's own gray (about 93 % opaque) over it,
+    /// and the result is the same gray on both sides only when this strip is (44, 45, 45).
+    static let titleBarGray = Color(red: 44 / 255, green: 45 / 255, blue: 45 / 255)
+
+    /// The Back pill that used to be drawn inside the player (top left). Off now; see `titleBarBack`.
+    static let inPlayerBackPill = false
+
+    /// Windowed player: Back pill up in the title bar, where the app's own Back pill sits on a page
+    /// (right after the EMBYFLIX name in the Top bar layout, right after the window buttons otherwise).
+    /// Not drawn in full screen, where Esc leaves the player.
+    var titleBarBack: some View {
+        let h = titleBarHeight
+        let x: CGFloat = UserDefaults.standard.string(forKey: "navStyle") == "topbar" ? 176 : 80
+        let visible = h > 0 && (showUI || panel != nil)
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                BackPill(compact: true) { back() }.help("Back (Esc)").padding(.leading, x)
+                Spacer(minLength: 0)
+            }.frame(height: h)
+            Spacer(minLength: 0)
+        }
+        .ignoresSafeArea()
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.2), value: showUI)
+    }
+
     /// Full screen for the video; leaving the player restores the window if the player made it full screen.
     func toggleFullScreen() {
         guard let w = window else { return }
@@ -2435,6 +3007,12 @@ struct PlayerView: View {
         if !on { enteredFullScreen = true }
         w.toggleFullScreen(nil)
         isFullScreen = !on
+    }
+
+    /// Back button: in full screen the first click leaves full screen (the video keeps playing),
+    /// the next click stops playback and returns to the app.
+    func back() {
+        if isFullScreen { toggleFullScreen() } else { close() }
     }
 
     func close() {
@@ -2497,7 +3075,9 @@ struct PlayerView: View {
         GeometryReader { geo in
             ZStack {
                 Color.black.ignoresSafeArea()
-                if let p = model.player { AVPlayerViewRep(player: p, onLayer: model.attach).ignoresSafeArea() }
+                if let p = model.player {
+                    AVPlayerViewRep(player: p, onLayer: model.attach).ignoresSafeArea().padding(.top, titleBarHeight)
+                }
                 else if model.error.isEmpty { Spinner(inPlayer: true).controlSize(.large) }
                 if model.pipActive { pipPlaceholder }
 
@@ -2525,6 +3105,12 @@ struct PlayerView: View {
                 if showInfo { infoOverlay }
                 cornerCards
                 panelLayer
+                // Title bar strip, above every layer (the controls' dark gradient used to darken it)
+                VStack(spacing: 0) {
+                    PlayerView.titleBarGray.frame(height: titleBarHeight)
+                    Spacer(minLength: 0)
+                }.ignoresSafeArea().allowsHitTesting(false)
+                titleBarBack
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -2638,7 +3224,9 @@ struct PlayerView: View {
 
     var topBar: some View {
         HStack(spacing: 16) {
-            BackPill { close() }.help("Back (Esc)")
+            // The pill that used to sit here is hidden (kept, not deleted): in full screen Esc does the job, and in a
+            // window the pill now lives in the title bar (titleBarBack). Set inPlayerBackPill to true to bring it back.
+            if Self.inPlayerBackPill { BackPill { back() }.help(isFullScreen ? "Exit full screen (Esc)" : "Back (Esc)") }
             AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
             } placeholder: { EmptyView() }
@@ -3420,6 +4008,9 @@ struct HoverPreview: View {
         .frame(width: 320)
         .background(Color(white: 0.12))
         .environment(\.colorScheme, .dark)
+        // Clicking anywhere on the card (outside its buttons) opens this item's page
+        .contentShape(Rectangle())
+        .onTapGesture { close(); emby.openRequest = item }
     }
 
     func circle(_ icon: String, on: Bool, help: String, _ action: @escaping () -> Void) -> some View {

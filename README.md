@@ -18,13 +18,15 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 
 ### Browsing
 - Sign in to one or more Emby servers (http or https). Saved servers can be switched from the sidebar.
-- Home page with a rotating featured banner, Continue Watching, and rows for each library.
+- Home page with a rotating featured banner (white text with a black outline over the picture), Continue Watching, and rows for each library.
+- **Continue Watching** cards show the title bottom-left, "S3·E3 · 42m left" (or the time left for a movie) top-left and a white progress ring bottom-right. The play button resumes; clicking the card opens the series page on that season (or the movie page).
+- **Navigation:** a sidebar, or a Netflix-style **top bar** in the title bar (Home, Favorites, Now Playing, your libraries, search and Settings). Choose it under Settings → General → Appearance → Navigation.
 - Library pages:
   - grid or list view
   - sort and filter (watched, unwatched, genre), with an A–Z jump bar
   - **Group by Collection** (⋯ menu) in movie libraries shows each collection as one poster
   - your choices are remembered per library
-- Series pages have a season poster row with unwatched counts and an episode grid or a Netflix-style list (number, still with progress, title, length, summary). Episode stills are loaded without server image frames. Movie pages show cast, similar titles and version, audio, subtitle and quality pickers.
+- Series pages have a season poster row with unwatched counts and an episode grid or a Netflix-style list (number, still with progress, title, length, summary). A season shows only its unwatched episodes, with a **Show all / Hide watched** link when it has both. Grid cards put the name bottom-left, "S3·E3 · 42m left" top-left and a white progress ring bottom-right. The episode description can be turned off. Episode stills are loaded without server image frames. Movie pages show cast, similar titles and version, audio, subtitle and quality pickers.
 - **Actor pages:** click anyone in Cast & Crew to see all their movies and shows in your libraries.
 - **Favorites** page like Emby: Favorite Movies, Favorite Shows and Favorite Collections rows; each heading opens the full list. Shows display their run (e.g. 2007 – 2019).
 - Watched/unwatched badges (neutral white-on-dark, so they don't clash with the accent colour).
@@ -32,7 +34,8 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Rows scroll with the arrows (one item per click; each arrow hides when that end is reached), by dragging with the mouse, or with the trackpad.
 - Search across movies, shows and people. Matching people appear in their own row and open their actor page.
 - Posters, seasons and episodes lift on hover; episodes show a play button.
-- **Hover preview card:** rest on a poster to see the backdrop, details and summary, with Play, favorite and watched buttons.
+- Posters, series and episodes have a thin white border.
+- **Hover preview card:** rest on a poster to see the backdrop, details and summary, with Play, favorite and watched buttons. It opens over the poster with a zoom (Smooth or Spring, adjustable duration) that can be turned off, and clicking it opens the title. The delay is adjustable, and the whole hover preview can be switched off.
 
 ### Player
 - Direct play or HLS transcode. Quick **subtitle** and **quality** menus sit in the player's bottom bar. Server transcodes are stopped when you close the player, and are kept alive while you pause, so subtitles stay in sync after resuming.
@@ -40,7 +43,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - **Subtitles:**
   - text subtitles (SRT and others) are drawn by the app; image subtitles (PGS) are burned in by the server
   - adjustable offset, size, colour, shadow, background and position; subtitles move above the controls while they are shown
-  - you can always load your preferred language
+  - **Always load preferred subtitle language** applies everywhere (movies, episodes, Continue Watching), ahead of what was remembered for a series
   - audio and subtitle choices are remembered per series
 - **Skip intros automatically** using Emby's intro markers. You can turn this off to get a Skip Intro button instead.
 - **Up next card** in the last 30 seconds of an episode, showing when the next one starts. Space or Return plays it now.
@@ -51,7 +54,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Keyboard: Space play/pause (or play the next episode when the Up next card shows), ← → skip, F full screen, E episodes, C chapters, I info, P picture in picture, Esc back.
 
 ### Settings (⌘,)
-General, Libraries (including **Poster labels**: title, year, centered or left), Series & Episodes, Subtitles, Playback, Servers, and About with the update controls.
+General (accent color, background, navigation style, **Reset all settings to default**), Libraries (**Poster labels**, hover preview, episode layout and description, library list), Subtitles, Playback, Servers (saved servers and **Sign Out**), and About with the update controls.
 
 > Intro skipping and thumbnail previews depend on your Emby server: intro detection and thumbnail-image extraction must be enabled there.
 
@@ -62,13 +65,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.7.4 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.8 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.7.4`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.8`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
