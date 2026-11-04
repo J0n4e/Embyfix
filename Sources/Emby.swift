@@ -17,6 +17,8 @@ struct Item: Identifiable, Decodable, Hashable {
     let RunTimeTicks: Int64?
     let CommunityRating: Double?
     let Genres: [String]?
+    let EndDate: String?
+    let Status: String?
     struct UD: Decodable, Hashable { let Played: Bool?; let IsFavorite: Bool?; let PlayedPercentage: Double?; let UnplayedItemCount: Int?; let PlaybackPositionTicks: Int64? }
     var id: String { Id }
     var backdropId: String? { (BackdropImageTags ?? []).isEmpty ? ParentBackdropItemId : Id }
@@ -26,6 +28,14 @@ struct Item: Identifiable, Decodable, Hashable {
     var isBox: Bool { `Type` == "BoxSet" }
     var playable: Bool { !isSeries && !isBox }
     var isEpisode: Bool { `Type` == "Episode" }
+    /// "2012" for movies; "2007 – 2019" or "2017 – Present" for shows, as Emby shows it.
+    var yearText: String {
+        guard let y = ProductionYear else { return " " }
+        guard isSeries else { return String(y) }
+        if Status == "Continuing" { return "\(y) – Present" }
+        if let e = EndDate, let ey = Int(e.prefix(4)), ey != y { return "\(y) – \(ey)" }
+        return String(y)
+    }
 }
 struct ItemList: Decodable { let Items: [Item]; let TotalRecordCount: Int? }
 struct PlayRequest: Identifiable {
@@ -378,7 +388,7 @@ final class Emby: ObservableObject {
     func libraryItems(_ lib: LibPref, limit: Int, start: Int = 0, sort: String? = nil, desc: Bool? = nil,
                       watch: String = "all", genre: String = "", letter: String = "", favorites: Bool = false,
                       types: String = "Movie,Series,BoxSet,Video,MusicVideo", groupCollections: Bool = false) async -> ItemList {
-        var q = ["ParentId": lib.id, "Fields": "Overview,Genres", "Limit": String(limit), "StartIndex": String(start),
+        var q = ["ParentId": lib.id, "Fields": "Overview,Genres,EndDate,Status", "Limit": String(limit), "StartIndex": String(start),
                  "Recursive": "true", "IncludeItemTypes": types]
         var by = "DateCreated", down = true
         switch sort ?? lib.style {
@@ -575,8 +585,8 @@ final class Emby: ObservableObject {
 
     func favorites() async -> [Item] {
         let r: ItemList? = try? await get("/Users/\(userId)/Items", ["Filters": "IsFavorite", "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series", "SortBy": "SortName", "SortOrder": "Ascending",
-            "Fields": "Overview,Genres"])
+            "IncludeItemTypes": "Movie,Series,BoxSet", "SortBy": "SortName", "SortOrder": "Ascending",
+            "Fields": "Overview,Genres,EndDate,Status"])
         return r?.Items ?? []
     }
 
