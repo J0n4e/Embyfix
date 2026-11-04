@@ -377,7 +377,7 @@ final class Emby: ObservableObject {
 
     func libraryItems(_ lib: LibPref, limit: Int, start: Int = 0, sort: String? = nil, desc: Bool? = nil,
                       watch: String = "all", genre: String = "", letter: String = "", favorites: Bool = false,
-                      types: String = "Movie,Series,BoxSet,Video,MusicVideo") async -> ItemList {
+                      types: String = "Movie,Series,BoxSet,Video,MusicVideo", groupCollections: Bool = false) async -> ItemList {
         var q = ["ParentId": lib.id, "Fields": "Overview,Genres", "Limit": String(limit), "StartIndex": String(start),
                  "Recursive": "true", "IncludeItemTypes": types]
         var by = "DateCreated", down = true
@@ -397,6 +397,11 @@ final class Emby: ObservableObject {
         if !f.isEmpty { q["Filters"] = f.joined(separator: ",") }
         if !genre.isEmpty { q["Genres"] = genre }
         if letter == "#" { q["NameLessThan"] = "A" } else if !letter.isEmpty { q["NameStartsWith"] = letter }
+        // Movies that belong to a collection are replaced by that collection (Emby does the grouping)
+        if groupCollections {
+            q["GroupItemsIntoCollections"] = "true"
+            if !types.contains("BoxSet") { q["IncludeItemTypes"] = types + ",BoxSet" }
+        }
         let r: ItemList? = try? await get("/Users/\(userId)/Items", q)
         return r ?? ItemList(Items: [], TotalRecordCount: 0)
     }

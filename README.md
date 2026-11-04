@@ -22,6 +22,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Library pages:
   - grid or list view
   - sort and filter (watched, unwatched, genre), with an A–Z jump bar
+  - **Group by Collection** (⋯ menu) in movie libraries shows each collection as one poster
   - your choices are remembered per library
 - Series pages have a season poster row with unwatched counts and an episode grid or list. Movie pages show cast, similar titles and version, audio, subtitle and quality pickers.
 - **Actor pages:** click anyone in Cast & Crew to see all their movies and shows in your libraries.
@@ -30,6 +31,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Rows scroll with the arrows (one item per click; each arrow hides when that end is reached), by dragging with the mouse, or with the trackpad.
 - Search across movies, shows and people. Matching people appear in their own row and open their actor page.
 - Posters, seasons and episodes lift on hover; episodes show a play button.
+- **Hover preview card:** rest on a poster to see the backdrop, details and summary, with Play, favorite and watched buttons.
 
 ### Player
 - Direct play or HLS transcode. Quick **subtitle** and **quality** menus sit in the player's bottom bar. Server transcodes are stopped when you close the player, and are kept alive while you pause, so subtitles stay in sync after resuming.
@@ -42,9 +44,10 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - **Skip intros automatically** using Emby's intro markers. You can turn this off to get a Skip Intro button instead.
 - **Up next card** in the last 30 seconds of an episode, showing when the next one starts. Space or Return plays it now.
 - **Thumbnail previews** when hovering or dragging the progress bar (uses Emby's generated thumbnails).
+- **Episode picker** (E) in the player: browse seasons and jump to another episode.
 - **Chapters** panel (C), **picture in picture** (P) and a **playback info** overlay (I) that shows codecs, bitrate and why the server is transcoding.
 - Video-only full screen (F). Esc leaves full screen without stopping the video. In full screen the pointer hides. The screen saver and display sleep are blocked while a video plays.
-- Keyboard: Space play/pause (or play the next episode when the Up next card shows), ← → skip, F full screen, C chapters, I info, P picture in picture, Esc back.
+- Keyboard: Space play/pause (or play the next episode when the Up next card shows), ← → skip, F full screen, E episodes, C chapters, I info, P picture in picture, Esc back.
 
 ### Settings (⌘,)
 General, Libraries, Series & Episodes, Subtitles, Playback, Servers, and About with the update controls.
@@ -58,13 +61,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.6.1 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.7 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.6.1`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.7`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
