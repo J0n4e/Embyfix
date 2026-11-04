@@ -186,6 +186,9 @@ struct LibraryDefaults {
 struct LibrariesSettings: View {
     @EnvironmentObject var emby: Emby
     @AppStorage("defaultLibraryLayout") private var defaultLayout = "grid"
+    @AppStorage("posterShowTitle") private var showTitle = true
+    @AppStorage("posterShowYear") private var showYear = true
+    @AppStorage("posterLabelAlign") private var labelAlign = "center"
     @State private var tick = 0   // redraw after writing per-library defaults
 
     func bind(_ lib: LibPref, _ k: String, _ def: String) -> Binding<String> {
@@ -196,6 +199,12 @@ struct LibrariesSettings: View {
     var body: some View {
         SettingsGroup(title: "Default view for new libraries") {
             SettingRow(label: "Layout") { segmented($defaultLayout, [("grid", "Grid"), ("list", "List")]) }
+        }
+        SettingsGroup(title: "Poster labels") {
+            Toggle("Show title under posters", isOn: $showTitle)
+            Toggle("Show year under posters", isOn: $showYear)
+            SettingRow(label: "Alignment") { segmented($labelAlign, [("center", "Centered"), ("left", "Left")]) }
+                .disabled(!showTitle && !showYear)
         }
         SettingsGroup(title: "Libraries",
                       note: "Show puts a library in the sidebar; Home row adds it to the home screen. Use the arrows to reorder.") {

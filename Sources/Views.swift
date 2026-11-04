@@ -843,6 +843,11 @@ struct PosterCard: View {
     @EnvironmentObject var emby: Emby
     let item: Item
     @State private var hover = false
+    // Settings → Libraries → Poster labels
+    @AppStorage("posterShowTitle") private var showTitle = true
+    @AppStorage("posterShowYear") private var showYear = true
+    @AppStorage("posterLabelAlign") private var labelAlign = "center"
+    var centered: Bool { labelAlign == "center" }
     @State private var preview = false      // Netflix-style card after resting on the poster
     @State private var overPreview = false
     @State private var hoverTask: Task<Void, Never>?
@@ -884,8 +889,14 @@ struct PosterCard: View {
                 }
                 .cornerRadius(8)
                 .modifier(HoverLift(hover: hover))
-                Text(item.Name).font(.callout.weight(.semibold)).lineLimit(1)
-                Text(item.yearText).font(.caption).foregroundColor(.secondary)
+                if showTitle || showYear {
+                    VStack(alignment: centered ? .center : .leading, spacing: 2) {
+                        if showTitle { Text(item.Name).font(.callout.weight(.semibold)).lineLimit(1) }
+                        if showYear { Text(item.yearText).font(.caption).foregroundColor(.secondary) }
+                    }
+                    .multilineTextAlignment(centered ? .center : .leading)
+                    .frame(width: 150, alignment: centered ? .center : .leading)
+                }
             }
             .frame(width: 150, alignment: .leading)
             .contentShape(Rectangle())
