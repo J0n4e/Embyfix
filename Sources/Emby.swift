@@ -368,8 +368,10 @@ final class Emby: ObservableObject {
         return j.flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
 
-    func image(_ id: String, _ kind: String = "Primary", width: Int = 400) -> URL? {
-        URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&api_key=\(token)")
+    /// `plain`: skip the server's image enhancers (e.g. the TV-set frame some plugins draw on episode stills).
+    func image(_ id: String, _ kind: String = "Primary", width: Int = 400, plain: Bool = false) -> URL? {
+        URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&api_key=\(token)"
+            + (plain ? "&EnableImageEnhancers=false" : ""))
     }
 
     // MARK: Libraries
