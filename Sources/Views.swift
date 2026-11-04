@@ -391,22 +391,24 @@ struct FavoritesView: View {
 
     var body: some View {
         let favs = items.filter { emby.isFav($0) }
-        let movies = favs.filter { !$0.isSeries }
+        let movies = favs.filter { !$0.isSeries && !$0.isBox }
         let shows = favs.filter { $0.isSeries }
+        let collections = favs.filter { $0.isBox }
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text("Favorites").font(.title.bold())
                     if !favs.isEmpty { Text("\(favs.count) Items").foregroundColor(.secondary) }
                 }
-                if !movies.isEmpty { section("Movies", movies) }
-                if !shows.isEmpty { section("Shows", shows) }
+                if !movies.isEmpty { section("Favorite Movies", movies) }
+                if !shows.isEmpty { section("Favorite Shows", shows) }
+                if !collections.isEmpty { section("Favorite Collections", collections) }
                 if loading && items.isEmpty { Spinner().frame(maxWidth: .infinity).padding(60) }
                 else if favs.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "heart").font(.system(size: 40)).foregroundColor(.secondary)
                         Text("No favorites yet").font(.headline)
-                        Text("Tap the heart on a movie or show to add it here.").foregroundColor(.secondary)
+                        Text("Tap the heart on a movie, show or collection to add it here.").foregroundColor(.secondary)
                     }.frame(maxWidth: .infinity).padding(.top, 80)
                 }
             }
@@ -416,12 +418,49 @@ struct FavoritesView: View {
         .onAppear { Task { items = await emby.favorites(); loading = false } }
     }
 
+    /// Emby-style row: "Favorite Movies ›" heading (opens the full grid) and a scrolling row of posters.
     func section(_ title: String, _ list: [Item]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.title3.bold())
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
-                ForEach(list) { PosterCard(item: $0) }
+        let byId = Dictionary(list.map { ($0.Id, $0) }, uniquingKeysWith: { a, _ in a })
+        return VStack(alignment: .leading, spacing: 8) {
+            NavigationLink { FavoriteGridView(title: title, ids: list.map(\.Id)) } label: {
+                HStack(spacing: 6) {
+                    Text(title).font(.title3.bold())
+                    Image(systemName: "chevron.right").font(.system(size: 15, weight: .bold)).foregroundColor(.secondary)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Show all")
+            ArrowScrollRow(ids: list.map(\.Id), itemWidth: 150, spacing: 16, inset: 0) { id in
+                if let it = byId[id] { PosterCard(item: it) }
             }
+        }
+    }
+}
+
+/// Full grid for one Favorites section (the › in the heading).
+struct FavoriteGridView: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
+    @Environment(\.dismiss) var dismiss
+    let title: String
+    let ids: [String]
+    @State private var items: [Item] = []
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(title).font(.title.bold())
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+                    ForEach(items.filter { emby.isFav($0) }) { PosterCard(item: $0) }
+                }
+            }.padding(.horizontal, 32).padding(.vertical, 24)
+        }
+        .background(bg)
+        .navigationTitle(title)
+        .navigationBarBackButtonHidden(true)
+        .toolbar { ToolbarItem(placement: .navigation) { BackPill(compact: true) { dismiss() } } }
+        .task {
+            let all = await emby.favorites()
+            let set = Set(ids)
+            items = all.filter { set.contains($0.Id) }
         }
     }
 }
@@ -846,7 +885,7 @@ struct PosterCard: View {
                 .cornerRadius(8)
                 .modifier(HoverLift(hover: hover))
                 Text(item.Name).font(.callout.weight(.semibold)).lineLimit(1)
-                Text(item.ProductionYear.map { String($0) } ?? " ").font(.caption).foregroundColor(.secondary)
+                Text(item.yearText).font(.caption).foregroundColor(.secondary)
             }
             .frame(width: 150, alignment: .leading)
             .contentShape(Rectangle())
