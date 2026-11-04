@@ -311,6 +311,10 @@ final class Emby: ObservableObject {
     }
 
     func get<T: Decodable>(_ path: String, _ q: [String: String] = [:]) async throws -> T {
+        var q = q
+        // The server leaves the year out unless asked; posters show it under the title
+        if let f = q["Fields"] { if !f.contains("ProductionYear") { q["Fields"] = f + ",ProductionYear" } }
+        else { q["Fields"] = "ProductionYear" }
         var c = URLComponents(string: server + path)!
         c.queryItems = q.map { URLQueryItem(name: $0.key, value: $0.value) }
         var r = URLRequest(url: c.url!)
