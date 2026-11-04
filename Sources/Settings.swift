@@ -5,17 +5,17 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.dismiss) var dismiss
+    @Environment(\.appBG) var bg
     var onDone: () -> Void
 
     enum Section: String, CaseIterable, Identifiable {
-        case general = "General", libraries = "Libraries", series = "Series & Episodes",
+        case general = "General", libraries = "Libraries",
              subtitles = "Subtitles", playback = "Playback", servers = "Servers"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .general: return "paintpalette"
             case .libraries: return "square.grid.2x2"
-            case .series: return "tv"
             case .subtitles: return "captions.bubble"
             case .playback: return "play.rectangle"
             case .servers: return "server.rack"
@@ -29,7 +29,8 @@ struct SettingsView: View {
             HStack {
                 Text("Settings").font(.title2.bold())
                 Spacer()
-                Button("Done") { emby.saveLibs(); onDone(); dismiss() }.keyboardShortcut(.defaultAction)
+                Button { emby.saveLibs(); onDone(); dismiss() } label: { Text("Done").onAccent() }
+                    .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }.padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
@@ -53,7 +54,6 @@ struct SettingsView: View {
                         switch section {
                         case .general: GeneralSettings()
                         case .libraries: LibrariesSettings()
-                        case .series: SeriesSettings()
                         case .subtitles: SubtitleSettings()
                         case .playback: PlaybackSettings()
                         case .servers: ServerSettings()
@@ -65,6 +65,7 @@ struct SettingsView: View {
             }
         }
         .frame(width: 860, height: 580)
+        .background(bg)
     }
 }
 
@@ -115,14 +116,30 @@ func menuPicker<T: Hashable>(_ sel: Binding<T>, _ opts: [(T, String)]) -> some V
 struct GeneralSettings: View {
     @AppStorage("accent") private var accent = "red"
     @AppStorage("bg") private var bg = "black"
+    @AppStorage("navStyle") private var navStyle = "sidebar"
+    @EnvironmentObject var emby: Emby
+    @State private var confirmReset = false
+
+    /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
+    /// order and window positions). The saved servers and sign-ins are kept.
+    func resetAllSettings() {
+        let keep: Set<String> = ["server", "token", "uid", "servers", "did"]
+        let d = UserDefaults.standard
+        for key in d.dictionaryRepresentation().keys where !keep.contains(key) {
+            d.removeObject(forKey: key)
+        }
+        Task { await emby.loadLibs() }
+    }
 
     func swatches(_ list: [(String, Color)], selection: Binding<String>) -> some View {
         HStack(spacing: 14) {
             ForEach(list, id: \.0) { name, color in
                 Button { selection.wrappedValue = name } label: {
-                    Circle().fill(color).frame(width: 40, height: 40)
-                        .overlay(Circle().stroke(Color.white, lineWidth: selection.wrappedValue == name ? 3 : 0))
+                    Circle().fill(color).frame(width: 34, height: 34)
                         .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                        // selection ring sits outside the swatch so it also shows on the white one
+                        .overlay(Circle().stroke(Color.white, lineWidth: 3).padding(-5)
+                            .opacity(selection.wrappedValue == name ? 1 : 0))
                         .frame(width: 44, height: 44).contentShape(Circle())
                 }.buttonStyle(.plain).help(name.capitalized)
             }
@@ -152,6 +169,24 @@ struct GeneralSettings: View {
             swatches(Theme.accents, selection: $accent)
             Text("Background").foregroundColor(.secondary).padding(.top, 4)
             bgTiles(selection: $bg)
+            SettingRow(label: "Navigation") {
+                Picker("", selection: $navStyle) {
+                    Text("Sidebar").tag("sidebar")
+                    Text("Top bar").tag("topbar")
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
+            }.padding(.top, 4)
+            Text("Top bar replaces the sidebar with a Netflix-style bar across the top (Home, Favorites, libraries, search and Settings).")
+                .font(.caption).foregroundColor(.secondary)
+        }
+        SettingsGroup(title: "Reset",
+                      note: "Puts every setting back to its default: colors, navigation, layouts, filters, hover preview, subtitles, player and window position. Your servers and sign-in are kept.") {
+            Button("Reset all settings to default…", role: .destructive) { confirmReset = true }
+        }
+        .alert("Reset all settings?", isPresented: $confirmReset) {
+            Button("Reset", role: .destructive) { resetAllSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Everything goes back to its default. You stay signed in. Quit and reopen EmbyFlix afterwards so the window starts fresh.")
         }
         SettingsGroup(title: "About") {
             SettingRow(label: "Version") {
@@ -189,6 +224,13 @@ struct LibrariesSettings: View {
     @AppStorage("posterShowTitle") private var showTitle = true
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
+    @AppStorage("showEpisodeDescription") private var showEpDesc = true
+    @AppStorage("episodeLayout") private var epLayout = "list"
+    @AppStorage("hoverPreviewEnabled") private var hoverOn = true
+    @AppStorage("hoverPreviewDelay") private var hoverDelay = 0.7
+    @AppStorage("hoverZoomEnabled") private var hoverZoom = true
+    @AppStorage("hoverZoomDuration") private var hoverZoomDur = 0.3
+    @AppStorage("hoverZoomStyle") private var hoverZoomStyle = "spring"
     @State private var tick = 0   // redraw after writing per-library defaults
 
     func bind(_ lib: LibPref, _ k: String, _ def: String) -> Binding<String> {
@@ -205,6 +247,34 @@ struct LibrariesSettings: View {
             Toggle("Show year under posters", isOn: $showYear)
             SettingRow(label: "Alignment") { segmented($labelAlign, [("center", "Centered"), ("left", "Left")]) }
                 .disabled(!showTitle && !showYear)
+        }
+        SettingsGroup(title: "Hover preview") {
+            Toggle("Show the preview card when hovering a poster", isOn: $hoverOn)
+            SettingRow(label: "Delay before it opens") {
+                HStack(spacing: 10) {
+                    Slider(value: $hoverDelay, in: 0.1...2.0, step: 0.1).frame(width: 200)
+                    Text(String(format: "%.1f s", hoverDelay)).monospacedDigit().foregroundColor(.secondary)
+                        .frame(width: 46, alignment: .trailing)
+                }
+            }.disabled(!hoverOn)
+            Toggle("Zoom animation (zoom out when it opens, zoom in when it closes)", isOn: $hoverZoom).disabled(!hoverOn)
+            SettingRow(label: "Animation style") {
+                Picker("", selection: $hoverZoomStyle) {
+                    Text("Smooth").tag("smooth")
+                    Text("Spring").tag("spring")
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 260)
+            }.disabled(!hoverOn || !hoverZoom)
+            SettingRow(label: "Zoom duration") {
+                HStack(spacing: 10) {
+                    Slider(value: $hoverZoomDur, in: 0.1...1.0, step: 0.05).frame(width: 200)
+                    Text(String(format: "%.2f s", hoverZoomDur)).monospacedDigit().foregroundColor(.secondary)
+                        .frame(width: 46, alignment: .trailing)
+                }
+            }.disabled(!hoverOn || !hoverZoom)
+        }
+        SettingsGroup(title: "Series") {
+            SettingRow(label: "Episode layout") { segmented($epLayout, [("grid", "Grid"), ("list", "List")]) }
+            Toggle("Show episode description", isOn: $showEpDesc)
         }
         SettingsGroup(title: "Libraries",
                       note: "Show puts a library in the sidebar; Home row adds it to the home screen. Use the arrows to reorder.") {
@@ -267,7 +337,9 @@ struct SeriesSettings: View {
                             "Korean", "Chinese"]
 
     var langOptions: [(String, String)] {
-        var list = [("", "Off")] + Self.languages.map { ($0.lowercased(), $0) }
+        let always = UserDefaults.standard.bool(forKey: "subAlways")
+        var list = [("", always ? (UserDefaults.standard.string(forKey: "subLang") ?? "english").capitalized : "Off")] + (always ? [("off", "Off")] : [])
+            + Self.languages.map { ($0.lowercased(), $0) }
         if !epSubLang.isEmpty, !list.contains(where: { $0.0 == epSubLang }) {
             list.append((epSubLang, epSubLang.capitalized))
         }
@@ -373,6 +445,11 @@ struct ServerSettings: View {
     @EnvironmentObject var emby: Emby
 
     var body: some View {
+        SettingsGroup(title: "Account") {
+            SettingRow(label: "Signed in to \(emby.currentServerName)") {
+                Button("Sign Out", role: .destructive) { emby.logout() }
+            }
+        }
         SettingsGroup(title: "Saved servers",
                       note: "Removing a server forgets its saved sign-in. You can add servers from the sign-in screen (Switch Server).") {
             if emby.servers.isEmpty { Text("No saved servers.").foregroundColor(.secondary) }
