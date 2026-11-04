@@ -804,6 +804,20 @@ struct PosterCard: View {
     @EnvironmentObject var emby: Emby
     let item: Item
     @State private var hover = false
+    @State private var preview = false      // Netflix-style card after resting on the poster
+    @State private var overPreview = false
+    @State private var hoverTask: Task<Void, Never>?
+
+    /// Opens the preview after ~0.7 s on the poster; closes shortly after the pointer leaves poster and card.
+    func hoverChanged() {
+        hoverTask?.cancel()
+        let inside = hover || overPreview
+        hoverTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(inside ? 700 : 250))
+            if Task.isCancelled { return }
+            preview = hover || overPreview
+        }
+    }
     var body: some View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
@@ -836,9 +850,12 @@ struct PosterCard: View {
             }
             .frame(width: 150, alignment: .leading)
             .contentShape(Rectangle())
-            .onHover { hover = $0 }
+            .onHover { hover = $0; hoverChanged() }
             .zIndex(hover ? 1 : 0)
-            .help(item.Name)
+            .popover(isPresented: $preview, arrowEdge: .trailing) {
+                HoverPreview(item: item) { preview = false }
+                    .onHover { overPreview = $0; hoverChanged() }
+            }
         }.buttonStyle(.plain)
     }
 }
@@ -2287,7 +2304,7 @@ struct PlayerView: View {
     @StateObject private var model = PlayerModel()
     let req: PlayRequest
 
-    enum Panel { case subtitles, appearance, chapters }
+    enum Panel { case subtitles, appearance, chapters, episodes }
     @State private var panel: Panel?
     @State private var showUI = true
     @State private var hideTask: Task<Void, Never>?
@@ -2296,6 +2313,7 @@ struct PlayerView: View {
     @State private var episodes: [Item] = []
     @FocusState private var focused: Bool
     @State private var showInfo = false
+    @State var pickerSeason = 1
     @State private var infoLines: [(String, String)] = []
     @State private var hoverX: CGFloat?
     @State private var sliderW: CGFloat = 1
@@ -2456,6 +2474,12 @@ struct PlayerView: View {
         .onChange(of: model.playing) { _, on in KeepAwake.set(on, owner: model) }
         .onDisappear { KeepAwake.set(false, owner: model) }
         .onKeyPress("p") { model.togglePiP(); return .handled }
+        .onKeyPress("e") {
+            guard item.isEpisode && episodes.count > 1 else { return .ignored }
+            if panel != .episodes { pickerSeason = item.ParentIndexNumber ?? 1 }
+            panel = panel == .episodes ? nil : .episodes
+            return .handled
+        }
         // Keep keyboard focus on the player (Space must always reach it, e.g. for "Play now")
         .onChange(of: showUpNext) { _, on in if on { focused = true } }
         .onChange(of: panel) { _, p in if p == nil { focused = true } }
@@ -2635,6 +2659,10 @@ struct PlayerView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
         case .appearance:
             HStack { Spacer(); appearancePanel }.transition(.move(edge: .trailing))
+        case .episodes:
+            HStack { Spacer(); episodesPanel }
+                .padding(.top, 84).padding(.bottom, 190).padding(.trailing, 24)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
         case .chapters:
             HStack { Spacer(); chaptersPanel }
                 .padding(.top, 84).padding(.bottom, 190).padding(.trailing, 24)
@@ -2845,6 +2873,14 @@ extension PlayerView {
 
     var extraButtons: some View {
         HStack(spacing: 22) {
+            if item.isEpisode && episodes.count > 1 {
+                iconButton("rectangle.stack", size: 18, on: panel == .episodes) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        if panel != .episodes { pickerSeason = item.ParentIndexNumber ?? 1 }
+                        panel = panel == .episodes ? nil : .episodes
+                    }
+                }.help("Episodes (E)")
+            }
             if !model.subStreams.isEmpty { subtitleMenu }
             qualityMenu
             if !model.chapterList.isEmpty {
@@ -2987,6 +3023,74 @@ extension PlayerView {
         }
         .padding(.top, 70).padding(.leading, 20)
         .allowsHitTesting(false)
+    }
+
+    // MARK: Episodes panel
+
+    var episodesPanel: some View {
+        let seasons = Array(Set(episodes.map { $0.ParentIndexNumber ?? 0 })).sorted()
+        let list = episodes.filter { ($0.ParentIndexNumber ?? 0) == pickerSeason }
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Episodes").font(.system(size: 18, weight: .bold))
+                Spacer()
+                if seasons.count > 1 {
+                    Picker("", selection: $pickerSeason) {
+                        ForEach(seasons, id: \.self) { n in Text(n == 0 ? "Specials" : "Season \(n)").tag(n) }
+                    }.labelsHidden().fixedSize()
+                }
+            }.padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 8)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(list) { ep in episodePickerRow(ep).id(ep.Id) }
+                    }.padding(.bottom, 10)
+                }
+                .onAppear { proxy.scrollTo(item.Id, anchor: .center) }
+            }
+        }
+        .frame(width: 400)
+        .background(.ultraThinMaterial.opacity(0.95))
+        .background(Color(white: 0.15).opacity(0.85))
+        .cornerRadius(14)
+        .environment(\.colorScheme, .dark)
+        .onTapGesture {}
+    }
+
+    func episodePickerRow(_ ep: Item) -> some View {
+        let current = ep.Id == item.Id
+        let played = emby.isPlayed(ep)
+        return Button { if !current { panel = nil; play(ep) } } label: {
+            HStack(spacing: 12) {
+                AsyncImage(url: emby.image(ep.Id, width: 320)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: { Color.white.opacity(0.08) }
+                .frame(width: 120, height: 68).clipped().cornerRadius(5)
+                .overlay {
+                    if current {
+                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 18)).foregroundColor(.white)
+                            .padding(6).background(Circle().fill(Color.black.opacity(0.6)))
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if played && !current {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 14))
+                            .foregroundColor(WatchBadge.green).padding(4)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(ep.IndexNumber ?? 0). \(ep.Name)").font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                    if let t = ep.RunTimeTicks, t > 0 {
+                        Text(runtimeText(t)).font(.system(size: 12)).foregroundColor(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(current ? accent : .white)
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background(current ? Color.white.opacity(0.08) : Color.clear)
+            .contentShape(Rectangle())
+        }.buttonStyle(PanelRowStyle())
     }
 
     // MARK: Chapters panel
@@ -3183,4 +3287,66 @@ struct SelfHoverLift: ViewModifier {
 extension View {
     /// `play`: size of the play button shown on hover (0 = none).
     func hoverLift(play: CGFloat = 0) -> some View { modifier(SelfHoverLift(play: play)) }
+}
+
+/// Netflix-style expanded card shown when resting on a poster: backdrop, details and quick actions.
+struct HoverPreview: View {
+    @EnvironmentObject var emby: Emby
+    let item: Item
+    let close: () -> Void
+
+    var facts: String {
+        var f: [String] = []
+        if let y = item.ProductionYear { f.append(String(y)) }
+        if let t = item.RunTimeTicks, t > 0, !item.isSeries { f.append(runtimeText(t)) }
+        if let r = item.CommunityRating { f.append(String(format: "★ %.1f", r)) }
+        return f.joined(separator: "  ·  ")
+    }
+
+    var body: some View {
+        let played = emby.isPlayed(item), fav = emby.isFav(item)
+        VStack(alignment: .leading, spacing: 10) {
+            AsyncImage(url: emby.image(item.backdropId ?? item.Id, item.backdropId == nil ? "Primary" : "Backdrop", width: 640)) { img in
+                img.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: { Color(white: 0.15) }
+            .frame(width: 320, height: 180).clipped()
+            VStack(alignment: .leading, spacing: 8) {
+                Text(item.Name).font(.headline).lineLimit(2)
+                if !facts.isEmpty { Text(facts).font(.caption).foregroundColor(.secondary) }
+                if let g = item.Genres, !g.isEmpty {
+                    Text(g.prefix(3).joined(separator: " • ")).font(.caption).foregroundColor(.secondary)
+                }
+                if let o = item.Overview, !o.isEmpty {
+                    Text(o).font(.caption).lineLimit(3).foregroundColor(.white.opacity(0.85))
+                }
+                HStack(spacing: 10) {
+                    Button { close(); Task { await emby.play(item) } } label: {
+                        Label("Play", systemImage: "play.fill").font(.callout.weight(.bold))
+                            .foregroundColor(.black).padding(.horizontal, 14).padding(.vertical, 6)
+                            .background(Capsule().fill(Color.white))
+                    }.buttonStyle(.plain)
+                    circle(fav ? "heart.fill" : "heart", on: fav, help: fav ? "Remove from favorites" : "Add to favorites") {
+                        Task { await emby.setFav(item.id, !fav) }
+                    }
+                    circle(played ? "checkmark.circle.fill" : "checkmark", on: played,
+                           help: played ? "Mark as unwatched" : "Mark as watched") {
+                        Task { await emby.setPlayed(item.id, !played) }
+                    }
+                }.padding(.top, 2)
+            }.padding(.horizontal, 14).padding(.bottom, 14)
+        }
+        .frame(width: 320)
+        .background(Color(white: 0.12))
+        .environment(\.colorScheme, .dark)
+    }
+
+    func circle(_ icon: String, on: Bool, help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.white))
+                .frame(width: 32, height: 32)
+                .overlay(Circle().stroke(Color.white.opacity(0.5), lineWidth: 1.5))
+                .contentShape(Circle())
+        }.buttonStyle(.plain).help(help)
+    }
 }
