@@ -27,7 +27,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Series pages have a season poster row with unwatched counts and an episode grid or a Netflix-style list (number, still with progress, title, length, summary). Episode stills are loaded without server image frames. Movie pages show cast, similar titles and version, audio, subtitle and quality pickers.
 - **Actor pages:** click anyone in Cast & Crew to see all their movies and shows in your libraries.
 - **Favorites** page like Emby: Favorite Movies, Favorite Shows and Favorite Collections rows; each heading opens the full list. Shows display their run (e.g. 2007 – 2019).
-- Watched/unwatched badges.
+- Watched/unwatched badges (neutral white-on-dark, so they don't clash with the accent colour).
 - **Now Playing:** every active stream on the server, with its title, position, direct play or transcode, client, device, user and IP.
 - Rows scroll with the arrows (one item per click; each arrow hides when that end is reached), by dragging with the mouse, or with the trackpad.
 - Search across movies, shows and people. Matching people appear in their own row and open their actor page.
@@ -39,7 +39,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Resume and Start Over, with progress synced to the server. Playback starts directly at the resume point, so subtitles stay in sync.
 - **Subtitles:**
   - text subtitles (SRT and others) are drawn by the app; image subtitles (PGS) are burned in by the server
-  - adjustable offset, size, colour, shadow, background and position
+  - adjustable offset, size, colour, shadow, background and position; subtitles move above the controls while they are shown
   - you can always load your preferred language
   - audio and subtitle choices are remembered per series
 - **Skip intros automatically** using Emby's intro markers. You can turn this off to get a Skip Intro button instead.
@@ -62,13 +62,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.7.3 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.7.4 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.7.3`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.7.4`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
