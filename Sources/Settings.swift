@@ -232,7 +232,7 @@ struct LibrariesSettings: View {
                 Button { emby.libs.swapAt(i, i + 1) } label: { Image(systemName: "arrow.down") }
                     .disabled(i == emby.libs.count - 1).buttonStyle(.borderless)
             }
-            HStack(spacing: 18) {
+            FlowLayout(hSpacing: 18, vSpacing: 8) {
                 labeled("View") { segmented(bind(lib, "layout", defaultLayout), [("grid", "Grid"), ("list", "List")]) }
                 labeled("Sort") {
                     menuPicker(bind(lib, "sort", "name"),
@@ -244,12 +244,14 @@ struct LibrariesSettings: View {
                 labeled("Home row") {
                     menuPicker($emby.libs[i].style, [("latest", "Latest"), ("top", "Top Rated"), ("random", "Random"), ("az", "A–Z")])
                 }.disabled(!lib.onHome || !lib.visible)
-            }.font(.callout)
+            }
+            .font(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     func labeled<C: View>(_ t: String, @ViewBuilder _ c: () -> C) -> some View {
-        HStack(spacing: 6) { Text(t).foregroundColor(.secondary); c() }
+        HStack(spacing: 6) { Text(t).foregroundColor(.secondary).lineLimit(1).fixedSize(); c() }.fixedSize()
     }
 }
 

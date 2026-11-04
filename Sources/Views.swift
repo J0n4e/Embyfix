@@ -971,12 +971,12 @@ struct CountBadge: View {
         if let n = count {
             if n == 0 {
                 Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundColor(.white)
-                    .frame(width: 24, height: 24).background(Circle().fill(WatchBadge.green))
+                    .frame(width: 24, height: 24).background(Circle().fill(WatchBadge.green)).overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1.5))
                     .shadow(color: .black.opacity(0.5), radius: 3).help("All watched")
             } else {
                 Text(n > 99 ? "99+" : "\(n)").font(.system(size: 12, weight: .bold)).foregroundColor(.white)
                     .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 24)
-                    .background(Capsule().fill(WatchBadge.green))
+                    .background(Capsule().fill(WatchBadge.green)).overlay(Capsule().stroke(Color.white.opacity(0.85), lineWidth: 1.5))
                     .shadow(color: .black.opacity(0.5), radius: 3)
                     .help("\(n) unwatched episode\(n == 1 ? "" : "s")")
             }
@@ -988,19 +988,20 @@ struct CountBadge: View {
 struct WatchBadge: View {
     let item: Item
     let played: Bool
-    static let green = Color(red: 0.36, green: 0.66, blue: 0.33)
+    /// Neutral badge fill (dark, with a light ring), so "watched" doesn't compete with the accent color.
+    static let green = Color.black.opacity(0.7)
 
     var body: some View {
         if played {
             Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundColor(.white)
                 .frame(width: 24, height: 24)
-                .background(Circle().fill(Self.green))
+                .background(Circle().fill(Self.green)).overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1.5))
                 .shadow(color: .black.opacity(0.5), radius: 3)
                 .help("Watched")
         } else if item.isSeries, let n = item.UserData?.UnplayedItemCount, n > 0 {
             Text(n > 99 ? "99+" : "\(n)").font(.system(size: 12, weight: .bold)).foregroundColor(.white)
                 .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 24)
-                .background(Capsule().fill(Self.green))
+                .background(Capsule().fill(Self.green)).overlay(Capsule().stroke(Color.white.opacity(0.85), lineWidth: 1.5))
                 .shadow(color: .black.opacity(0.5), radius: 3)
                 .help("\(n) unwatched episode\(n == 1 ? "" : "s")")
         }
@@ -1743,7 +1744,7 @@ struct DetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(ep.Name).font(.system(size: 16, weight: .semibold)).lineLimit(1)
-                        if played { Image(systemName: "checkmark.circle.fill").foregroundColor(WatchBadge.green) }
+                        if played { Image(systemName: "checkmark.circle.fill").foregroundColor(.white.opacity(0.7)) }
                         Spacer()
                         if let t = ep.RunTimeTicks, t > 0 { Text(runtimeText(t)).foregroundColor(.secondary) }
                     }
@@ -2500,7 +2501,7 @@ struct PlayerView: View {
                 else if model.error.isEmpty { Spinner(inPlayer: true).controlSize(.large) }
                 if model.pipActive { pipPlaceholder }
 
-                subtitleLayer(geo.size)
+                subtitleLayer(geo.size).animation(.easeOut(duration: 0.2), value: showUI)
 
                 if showUI || panel != nil {
                     LinearGradient(colors: [.black.opacity(0.7), .clear, .clear, .black.opacity(0.85)],
@@ -2592,6 +2593,12 @@ struct PlayerView: View {
 
     // MARK: Subtitles drawn by the app
 
+    /// Subtitle distance from the bottom: the user's setting, but above the controls while they're showing.
+    func subLift(_ size: CGSize) -> CGFloat {
+        let base = size.height * subBottom / 100
+        return (showUI || panel != nil) ? max(base, 190) : base
+    }
+
     @ViewBuilder func subtitleLayer(_ size: CGSize) -> some View {
         if model.loadingSubs {
             VStack {
@@ -2602,7 +2609,7 @@ struct PlayerView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(Capsule().fill(Color.black.opacity(0.6)))
-                .padding(.bottom, size.height * subBottom / 100)
+                .padding(.bottom, subLift(size))
             }.frame(maxWidth: .infinity).allowsHitTesting(false)
         }
         if !model.caption.isEmpty {
@@ -2620,7 +2627,7 @@ struct PlayerView: View {
                     .background(Color.black.opacity(Self.bgs.first { $0.0 == subBg }?.2 ?? 0))
                     .cornerRadius(4)
                     .padding(.horizontal, size.width * 0.08)
-                    .padding(.bottom, size.height * subBottom / 100)
+                    .padding(.bottom, subLift(size))
             }
             .frame(maxWidth: .infinity)
             .allowsHitTesting(false)
@@ -3150,7 +3157,7 @@ extension PlayerView {
                 .overlay(alignment: .topTrailing) {
                     if played && !current {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 14))
-                            .foregroundColor(WatchBadge.green).padding(4)
+                            .foregroundColor(.white).shadow(radius: 2).padding(4)
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
