@@ -187,6 +187,10 @@ final class Emby: ObservableObject {
     @Published var userId = ""
     @Published var libs: [LibPref] = []
     @Published var playing: PlayRequest?
+    /// Set by anything that wants the main window to open an item's page (e.g. clicking a hover preview card).
+    @Published var openRequest: Item?
+    /// Season to pre-select when the opened item is a series (Continue Watching card click).
+    @Published var openSeason: Int?
     @Published var played: [String: Bool] = [:]
     @Published var faved: [String: Bool] = [:]
     @Published var servers: [SavedServer] = []
@@ -528,12 +532,32 @@ final class Emby: ObservableObject {
         await send("POST", "/Sessions/Playing/Ping?PlaySessionId=\(s.id)")
     }
 
+    /// Sessions stopped recently, whose transcode may still (or again) be running on the server.
+    private var recentStopped: [PlaySession] = []
+
     func reportStopped(_ s: PlaySession, _ sec: Double, duration: Double) async {
         let finished = duration > 0 && sec / duration > 0.9
         positions[s.itemId] = finished ? 0 : sec
         if finished { played[s.itemId] = true }
+        recentStopped.append(s)
+        if recentStopped.count > 6 { recentStopped.removeFirst() }
         await postJSON("/Sessions/Playing/Stopped", progressBody(s, sec))
         await stopEncoding(s)
+        // A segment request that was still in flight when playback stopped can make the server start a NEW
+        // transcode right after we killed the old one. That leftover job has a shifted timeline and gets
+        // reused the next time the same title is played, which puts the subtitles out of sync (this only
+        // happened when you left while the video was playing, not after pausing first). Kill again shortly after.
+        for delay in [2.0, 6.0] {
+            try? await Task.sleep(for: .seconds(delay))
+            await stopEncoding(s)
+        }
+    }
+
+    /// Called before a new playback asks for its stream: make sure nothing left over from earlier playbacks is running.
+    func killStaleEncodings() async {
+        let list = recentStopped
+        recentStopped = []
+        for s in list { await stopEncoding(s) }
     }
 
     func isFav(_ it: Item) -> Bool { faved[it.id] ?? it.UserData?.IsFavorite ?? false }
@@ -589,6 +613,11 @@ final class Emby: ObservableObject {
         try? await get("/Users/\(userId)/Items/\(id)", ["Fields": "Overview"])
     }
 
+    /// Any item's record by id (used to find the series behind an episode).
+    func itemRecord(_ id: String) async -> Item? {
+        try? await get("/Users/\(userId)/Items/\(id)", ["Fields": "Overview"])
+    }
+
     func favorites() async -> [Item] {
         let r: ItemList? = try? await get("/Users/\(userId)/Items", ["Filters": "IsFavorite", "Recursive": "true",
             "IncludeItemTypes": "Movie,Series,BoxSet", "SortBy": "SortName", "SortOrder": "Ascending",
@@ -611,10 +640,22 @@ final class Emby: ObservableObject {
 
     // MARK: Playback
 
-    private func absolute(_ path: String) -> URL? {
+    private func absolute(_ path: String, noCopy: Bool = false) -> URL? {
         var s = path.hasPrefix("http") ? path : server + (path.hasPrefix("/") ? path : "/" + path)
         if !s.contains("api_key=") { s += (s.contains("?") ? "&" : "?") + "api_key=" + token }
+        if noCopy { s = Self.withoutVideoCopy(s) }
         return URL(string: s)
+    }
+
+    /// Asks the server to re-encode the video instead of copying it. A copied video can only start at a
+    /// keyframe, so a stream that starts part-way through the file (resume) begins a few seconds before the
+    /// position the player thinks it has, which puts the subtitles ahead of the picture.
+    static func withoutVideoCopy(_ url: String) -> String {
+        guard var c = URLComponents(string: url) else { return url }
+        var q = (c.queryItems ?? []).filter { $0.name.lowercased() != "allowvideostreamcopy" }
+        q.append(URLQueryItem(name: "AllowVideoStreamCopy", value: "false"))
+        c.queryItems = q
+        return c.string ?? url
     }
 
     /// The server ignores the requested subtitle and burns in the user's default track,
@@ -648,7 +689,7 @@ final class Emby: ObservableObject {
 
     /// Asks the server how to play the item for AVPlayer: direct play for MP4/MOV, otherwise HLS transcode
     /// (also used whenever a subtitle, a different audio track or a lower quality is chosen).
-    func resolveStream(_ req: PlayRequest, direct: Bool = true) async -> URL? {
+    func resolveStream(_ req: PlayRequest, direct: Bool = true, reencode: Bool = false) async -> URL? {
         let id = req.item.id
         let canDirect = direct && !req.transcode
         let profile: [String: Any] = [
@@ -686,10 +727,11 @@ final class Emby: ObservableObject {
                cont.contains(where: { ["mp4", "m4v", "mov"].contains($0) }) {
                 return URL(string: "\(server)/Videos/\(id)/stream.mp4?Static=true&MediaSourceId=\(sid)&api_key=\(token)")
             }
-            if let t = src["TranscodingUrl"] as? String { return absolute(Self.fixSubtitle(t, req.sub)) }
-            if let t = src["DirectStreamUrl"] as? String { return absolute(t) }
+            if let t = src["TranscodingUrl"] as? String { return absolute(Self.fixSubtitle(t, req.sub), noCopy: reencode) }
+            if let t = src["DirectStreamUrl"] as? String { return absolute(t, noCopy: reencode) }
         }
-        return URL(string: "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&PlaySessionId=\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))&VideoCodec=h264&AudioCodec=aac&api_key=\(token)")
+        let fallback = "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&PlaySessionId=\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))&VideoCodec=h264&AudioCodec=aac&api_key=\(token)"
+        return URL(string: reencode ? Self.withoutVideoCopy(fallback) : fallback)
     }
 }
 
