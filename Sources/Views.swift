@@ -122,7 +122,7 @@ struct LoginView: View {
     var serverList: some View {
         VStack(spacing: 14) {
             Text("Select Server").font(.title.bold()).padding(.bottom, 6)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
                 ForEach(emby.servers) { s in serverCard(s) }
                 Button { startAdd() } label: {
                     VStack(spacing: 10) {
@@ -250,6 +250,15 @@ struct HomeView: View {
     @State private var reloadToken = 0
     @AppStorage("navStyle") private var navStyle = "sidebar"   // Settings → General → Appearance: "sidebar" or "topbar"
 
+    /// Sidebar row like the Apple TV app: blue icon, white text.
+    func sideLabel(_ title: String, _ icon: String) -> some View {
+        Label {
+            Text(title).foregroundColor(.white)
+        } icon: {
+            Image(systemName: icon).foregroundColor(Color(red: 0.24, green: 0.56, blue: 1))
+        }.font(.system(size: 15))
+    }
+
     func icon(_ lib: LibPref) -> String {
         switch lib.kind {
         case "movies": return "film"
@@ -278,20 +287,20 @@ struct HomeView: View {
     var splitLayout: some View {
         NavigationSplitView {
             List(selection: selB) {
-                Label("Home", systemImage: "house.fill").foregroundStyle(.tint).modifier(RootTap(id: "home", sel: sel, action: popToRoot)).tag("home")
-                Label("Favorites", systemImage: "heart.fill").foregroundStyle(.tint).modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
-                Label("Now Playing", systemImage: "dot.radiowaves.left.and.right")
-                    .foregroundStyle(.tint)
+                sideLabel("Home", "house").modifier(RootTap(id: "home", sel: sel, action: popToRoot)).tag("home")
+                sideLabel("Favorites", "heart").modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
+                sideLabel("Now Playing", "dot.radiowaves.left.and.right")
                     .modifier(RootTap(id: "nowplaying", sel: sel, action: popToRoot))
                     .badge(activeCount)
                     .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
-                Section("My Media") {
+                Section("Library") {
                     ForEach(emby.libs.filter { $0.visible }) { lib in
-                        Label(lib.title, systemImage: icon(lib)).foregroundStyle(.tint).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
+                        sideLabel(lib.title, icon(lib)).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
+            .environment(\.defaultMinListRowHeight, 34)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 290)
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading, spacing: 14) {
                     Button { emby.switchServer() } label: {
@@ -311,6 +320,19 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Connected to \(emby.server) — click to switch server")
+                    // Search sits in the sidebar, as in the Apple TV app
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundColor(.secondary)
+                        TextField("Search", text: queryB).textFieldStyle(.plain)
+                        if !query.isEmpty {
+                            Button { query = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color.white.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
             }
@@ -334,7 +356,7 @@ struct HomeView: View {
                     .frame(height: titleBarH).offset(y: -titleBarH).allowsHitTesting(false)
             }
         } detail: {
-            detailPane(withSearch: true)
+            detailPane(withSearch: false)
         }
     }
 
@@ -357,6 +379,7 @@ struct HomeView: View {
             // Back button in the title bar, left of the window title, on every page
             .toolbar { TitleBarItems(back: nil) }   // top-level pages: no Back (pushed pages add their own)
             .hideToolbarTitle()
+            .toolbarBackground(.hidden, for: .windowToolbar)
         }
     }
 
@@ -514,15 +537,14 @@ struct TopBackButton: View {
     @State private var hover = false
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left").font(.system(size: 13, weight: .bold))
-                Text("Back").font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            .background(Capsule().fill(Color.white.opacity(hover ? 0.28 : 0.18)))
-            .overlay(Capsule().stroke(Color.white.opacity(0.5), lineWidth: 1))
-            .contentShape(Capsule())
+            // Apple TV style: a round glass ‹ button
+            Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color.black.opacity(hover ? 0.55 : 0.4)))
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -569,7 +591,7 @@ struct SearchView: View {
                 Text("Results for “\(query)”").font(.title2.bold())
                 if !people.isEmpty { peopleRow }
                 if !people.isEmpty && !results.isEmpty { Text("Titles").font(.title3.bold()).padding(.top, 8) }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 18) {
                     ForEach(results) { PosterCard(item: $0) }
                 }
                 if busy { Spinner() }
@@ -665,7 +687,7 @@ struct FavoritesView: View {
                     Image(systemName: "chevron.right").font(.system(size: 15, weight: .bold)).foregroundColor(.secondary)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).help("Show all")
-            ArrowScrollRow(ids: list.map(\.Id), itemWidth: 150, spacing: 16, inset: 0) { id in
+            ArrowScrollRow(ids: list.map(\.Id), itemWidth: 170, spacing: 16, inset: 0) { id in
                 if let it = byId[id] { PosterCard(item: it) }
             }
         }
@@ -685,7 +707,7 @@ struct FavoriteGridView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title).font(.title.bold())
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], alignment: .leading, spacing: 22) {
                     ForEach(items.filter { emby.isFav($0) }) { PosterCard(item: $0) }
                 }
             }.padding(.horizontal, 32).padding(.vertical, 24)
@@ -695,6 +717,7 @@ struct FavoriteGridView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar { TitleBarItems(back: { dismiss() }) }
         .hideToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
             let all = await emby.favorites()
             let set = Set(ids)
@@ -849,6 +872,7 @@ struct PersonView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar { TitleBarItems(back: { dismiss() }) }
         .hideToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
             async let list = emby.itemsWithPerson(person.id)
             async let me = emby.person(person.id)
@@ -883,7 +907,7 @@ struct PersonView: View {
     func section(_ title: String, _ list: [Item]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("\(title) (\(list.count))").font(.title3.bold())
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], alignment: .leading, spacing: 22) {
                 ForEach(list) { PosterCard(item: $0) }
             }
         }
@@ -923,7 +947,7 @@ struct HomeContent: View {
                                 ResumeCard(item: row.items[$0])
                             }
                         } else {
-                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 150, spacing: 22, inset: 52) {
+                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 170, spacing: 22, inset: 52) {
                                 PosterCard(item: row.items[$0])
                             }
                         }
@@ -932,6 +956,7 @@ struct HomeContent: View {
                 if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
             }.padding(.bottom, 40)
         }
+        .ignoresSafeArea(edges: .top)          // banner runs up under the title bar, as in Apple TV
         .background(bg)
         .task(id: reloadToken) { rows = await emby.loadHome(); loading = false }
     }
@@ -1193,7 +1218,7 @@ struct PosterCard: View {
                     } placeholder: {
                         ZStack { Color(white: 0.15); Text(item.Name).font(.caption).padding(6) }
                     }
-                    .frame(width: 150, height: 225).clipped()
+                    .frame(width: 170, height: 255).clipped()
                     .opacity(played ? 0.6 : 1)
                     WatchBadge(item: item, played: played).padding(8)
                 }
@@ -1223,7 +1248,7 @@ struct PosterCard: View {
                             ptr.inside = true
                             let box = ptr
                             HoverCardCenter.shared.posterHover(item, inside: true) {
-                                CGRect(x: box.global.x - box.local.x, y: box.global.y - box.local.y, width: 150, height: 225)
+                                CGRect(x: box.global.x - box.local.x, y: box.global.y - box.local.y, width: 170, height: 255)
                             }
                         }
                     case .ended:
@@ -1238,10 +1263,10 @@ struct PosterCard: View {
                         if showYear { Text(item.yearText).font(.caption).foregroundColor(.secondary) }
                     }
                     .multilineTextAlignment(centered ? .center : .leading)
-                    .frame(width: 150, alignment: centered ? .center : .leading)
+                    .frame(width: 170, alignment: centered ? .center : .leading)
                 }
             }
-            .frame(width: 150, alignment: .leading)
+            .frame(width: 170, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { hover = $0 }
             .zIndex(hover ? 1 : 0)
@@ -1369,7 +1394,7 @@ struct HoverCardLayer: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .thinBorder(12)
                     .shadow(color: .black.opacity(0.6), radius: 24)
-                    .scaleEffect(open ? 1 : 150 / w, anchor: UnitPoint(x: ux, y: uy))
+                    .scaleEffect(open ? 1 : 170 / w, anchor: UnitPoint(x: ux, y: uy))
                     .opacity(open ? 1 : 0)
                     .animation(zoomOn ? zoomAnimation : nil, value: open)
                     .allowsHitTesting(open)
@@ -1850,7 +1875,7 @@ struct LibraryView: View {
                     }
                 }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 18) {
                     ForEach(items) { it in
                         PosterCard(item: it).onAppear {
                             if it.id == items.last?.id { Task { await load(reset: false) } }
@@ -2010,6 +2035,7 @@ struct DetailView: View {
                 similarSection
             }.padding(.bottom, 50)
         }
+        .ignoresSafeArea(edges: .top)
         .background(bg)
         .task {
             full = await emby.full(item.id)
@@ -2031,6 +2057,7 @@ struct DetailView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar { TitleBarItems(back: { dismiss() }) }
         .hideToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
     }
 
     @State private var moreText = false
@@ -2564,7 +2591,7 @@ struct DetailView: View {
     }
 
     var boxGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 18) {
             ForEach(kids) { PosterCard(item: $0) }
         }.padding(.horizontal, 52)
     }
@@ -2630,7 +2657,7 @@ struct DetailView: View {
         if !similar.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("More Like This").font(.system(size: 22, weight: .bold)).padding(.horizontal, 52)
-                ArrowScrollRow(ids: Array(similar.indices), itemWidth: 150, spacing: 14, inset: 52) { PosterCard(item: similar[$0]) }
+                ArrowScrollRow(ids: Array(similar.indices), itemWidth: 170, spacing: 14, inset: 52) { PosterCard(item: similar[$0]) }
             }
         }
     }
