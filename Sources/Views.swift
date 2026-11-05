@@ -371,7 +371,8 @@ struct HomeView: View {
     /// Top bar layout: a navigation row under the title bar (see TopNavBar), with the page area below it.
     var topLayout: some View {
         VStack(spacing: 0) {
-            TopNavBar().zIndex(1)   // in front of the page, so nothing on a page can cover its buttons
+            // In front of the page, so nothing on a page can cover its buttons. Back sits in the bar on pushed pages.
+            TopNavBar(back: path.isEmpty ? nil : { path.removeLast() }).zIndex(1)
             detailPane(withSearch: false).clipped()
         }.background(bg)
     }
@@ -416,29 +417,31 @@ final class NavState: ObservableObject {
     var popToRoot: () -> Void = {}
 }
 
-/// Window toolbar contents: the Back pill on pushed pages. (The Top bar layout's navigation sits in its own
-/// row under the title bar, see TopNavBar.)
+/// Window toolbar contents: the Back pill on pushed pages. (In the Top bar layout the navigation and Back
+/// sit in their own row under the title bar, see TopNavBar.)
 struct TitleBarItems: ToolbarContent {
     let back: (() -> Void)?
     var body: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            if let back { TopBackButton(action: back) }
+            if let back, UserDefaults.standard.string(forKey: "navStyle") != "topbar" { TopBackButton(action: back) }
         }
     }
 }
 
-/// Top bar layout: the row under the title bar with the EMBYFLIX name on the left, the navigation pill
-/// in the middle and search and Settings on the right. It stays in place on every page.
+/// Top bar layout: the row under the title bar with Back (on pushed pages) and the EMBYFLIX name on the left,
+/// the navigation pill in the middle and search and Settings on the right. It stays in place on every page.
+/// Laid out side by side, so a long pill never covers search and Settings.
 struct TopNavBar: View {
     @Environment(\.appBG) var bg
+    let back: (() -> Void)?
     var body: some View {
-        ZStack {
-            HStack {
-                Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint)
-                Spacer()
-                TopNavTools()
-            }
+        HStack(spacing: 16) {
+            if let back { TopBackButton(action: back) }
+            Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint).fixedSize()
+            Spacer(minLength: 0)
             TopNavButtons()
+            Spacer(minLength: 0)
+            TopNavTools().fixedSize()
         }
         .padding(.horizontal, 28).padding(.vertical, 12)
         .background(bg)
