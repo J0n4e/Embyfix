@@ -10,10 +10,10 @@ struct CoveApp: App {
     init() {
         Self.importEmbyFlixSettings()
         NSApplication.shared.setActivationPolicy(.regular)
-        // In the built app the icon comes from Info.plist. When run from `swift run`, load it from the
-        // SwiftPM resource bundle next to the binary. (Bundle.module crashes if that bundle is missing.)
-        if Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") == nil,
-           let res = Bundle.main.url(forResource: "Cove_Cove", withExtension: "bundle"),
+        // Show AppIcon.png exactly as drawn while the app runs (newer macOS redraws .icns icons in its own style,
+        // so the built app looked different from `swift run`). The .icns from Info.plist still serves Finder.
+        // Loaded from the SwiftPM resource bundle; Bundle.module crashes if that bundle is missing.
+        if let res = Bundle.main.url(forResource: "Cove_Cove", withExtension: "bundle"),
            let url = Bundle(url: res)?.url(forResource: "AppIcon", withExtension: "png"),
            let img = NSImage(contentsOf: url) {
             NSApplication.shared.applicationIconImage = img
