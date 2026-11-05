@@ -348,6 +348,18 @@ struct LibrariesSettings: View {
 
     var body: some View {
         PrefSection {
+            PrefRow(label: "Libraries") {
+                VStack(alignment: .leading, spacing: 6) {
+                    libraryTable
+                    Text("Drag to reorder. Click a library to change its options below.")
+                        .font(.callout).foregroundColor(.secondary)
+                }
+            }
+        }
+        if let i = emby.libs.firstIndex(where: { $0.id == selectedLib }) ?? (emby.libs.isEmpty ? nil : 0) {
+            libraryOptions(i, emby.libs[i])
+        }
+        PrefSection {
             PrefRow(label: "Poster labels") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Title", isOn: $showTitle)
@@ -361,7 +373,7 @@ struct LibrariesSettings: View {
             PrefRow(label: "Episode layout") { segmented($epLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
             PrefRow { Toggle("Show episode descriptions", isOn: $showEpDesc) }
         }
-        PrefSection {
+        PrefSection(last: true) {
             PrefRow(label: "New libraries") {
                 HStack(spacing: 10) {
                     segmented($defaultLayout, [("grid", "Grid"), ("list", "List")])
@@ -372,50 +384,83 @@ struct LibrariesSettings: View {
                 }
             }
         }
-        PrefSection(last: true) {
-            PrefRow(label: "Libraries") {
-                VStack(alignment: .leading, spacing: 0) {
-                    if emby.libs.isEmpty { Text("No libraries loaded yet.").foregroundColor(.secondary) }
-                    ForEach(Array(emby.libs.enumerated()), id: \.element.id) { i, lib in
-                        libraryCard(i, lib)
-                            .padding(12)
-                            .background(i % 2 == 0 ? Color.white.opacity(0.04) : Color.clear)
-                    }
-                }
-                .background(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1)))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            PrefNote("Show puts a library in the sidebar; Home adds a row for it on the home screen. Use the arrows to reorder.")
+    }
+
+    // MARK: Library table
+
+    @State private var selectedLib: String?
+    let blue = Color(red: 0.24, green: 0.56, blue: 1)
+
+    func kindIcon(_ lib: LibPref) -> String {
+        switch lib.kind {
+        case "movies": return "film"
+        case "tvshows": return "tv"
+        case "boxsets": return "square.stack"
+        case "music": return "music.note"
+        default: return "folder"
         }
     }
 
-    func libraryCard(_ i: Int, _ lib: LibPref) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                TextField(lib.name, text: $emby.libs[i].title).textFieldStyle(.roundedBorder).frame(width: 170)
-                Toggle("Show", isOn: $emby.libs[i].visible)
-                Toggle("Home", isOn: $emby.libs[i].onHome).disabled(!lib.visible)
-                Spacer()
-                Button { emby.libs.swapAt(i, i - 1) } label: { Image(systemName: "arrow.up") }
-                    .disabled(i == 0).buttonStyle(.borderless)
-                Button { emby.libs.swapAt(i, i + 1) } label: { Image(systemName: "arrow.down") }
-                    .disabled(i == emby.libs.count - 1).buttonStyle(.borderless)
+    /// Library | Sidebar | Home, one line per library; drag rows to reorder.
+    var libraryTable: some View {
+        let sel = selectedLib ?? emby.libs.first?.id
+        return VStack(spacing: 0) {
+            HStack {
+                Text("Library").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Sidebar").frame(width: 70)
+                Text("Home").frame(width: 60)
             }
-            FlowLayout(hSpacing: 18, vSpacing: 8) {
-                labeled("View") { segmented(bind(lib, "layout", defaultLayout), [("grid", "Grid"), ("list", "List")]) }
-                labeled("Sort") {
-                    menuPicker(bind(lib, "sort", "name"),
-                               [("name", "Name"), ("latest", "Recently Added"), ("release", "Release Date"), ("top", "Rating")])
+            .font(.caption.weight(.semibold)).foregroundColor(.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            Divider()
+            List {
+                ForEach($emby.libs) { $lib in
+                    let on = lib.id == sel
+                    HStack {
+                        Image(systemName: "line.3.horizontal").foregroundColor(.secondary.opacity(0.6)).font(.caption)
+                        Image(systemName: kindIcon(lib)).foregroundColor(on ? .white : blue).frame(width: 20)
+                        Text(lib.title).foregroundColor(lib.visible ? .primary : .secondary).lineLimit(1)
+                        Spacer()
+                        Toggle("", isOn: $lib.visible).labelsHidden().frame(width: 70)
+                        Toggle("", isOn: $lib.onHome).labelsHidden().disabled(!lib.visible).frame(width: 60)
+                    }
+                    .padding(.horizontal, 6).frame(height: 30)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(on ? blue.opacity(0.85) : Color.clear))
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedLib = lib.id }
+                    .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
-                labeled("Show") {
-                    menuPicker(bind(lib, "watch", "all"), [("all", "All"), ("unwatched", "Unwatched"), ("watched", "Watched")])
-                }
-                labeled("Home row") {
-                    menuPicker($emby.libs[i].style, [("latest", "Latest"), ("top", "Top Rated"), ("random", "Random"), ("az", "A–Z")])
-                }.disabled(!lib.onHome || !lib.visible)
+                .onMove { emby.libs.move(fromOffsets: $0, toOffset: $1) }
             }
-            .font(.callout)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
+            .frame(height: CGFloat(max(emby.libs.count, 1)) * 32 + 8)
+        }
+        .frame(width: 440)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1)))
+    }
+
+    /// Options for the library picked in the table.
+    func libraryOptions(_ i: Int, _ lib: LibPref) -> some View {
+        PrefSection {
+            PrefRow(label: "Name") {
+                TextField(lib.name, text: $emby.libs[i].title).textFieldStyle(.roundedBorder).frame(width: 220)
+            }
+            PrefRow(label: "View") { segmented(bind(lib, "layout", defaultLayout), [("grid", "Grid"), ("list", "List")]) }
+            PrefRow(label: "Sort by") {
+                menuPicker(bind(lib, "sort", "name"),
+                           [("name", "Name"), ("latest", "Recently Added"), ("release", "Release Date"), ("top", "Rating")])
+            }
+            PrefRow(label: "Show") {
+                menuPicker(bind(lib, "watch", "all"), [("all", "All"), ("unwatched", "Unwatched"), ("watched", "Watched")])
+            }
+            PrefRow(label: "Home row shows") {
+                menuPicker($emby.libs[i].style, [("latest", "Latest"), ("top", "Top Rated"), ("random", "Random"), ("az", "A–Z")])
+            }.disabled(!lib.onHome || !lib.visible)
         }
     }
 
