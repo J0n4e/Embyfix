@@ -34,15 +34,27 @@ struct OnAccent: ViewModifier {
     func body(content: Content) -> some View { content.foregroundColor(Theme.onAccent(name)) }
 }
 
+/// Apple TV glass: dark see-through fill, blur and a thin light outline (same as the round Back button).
+struct GlassCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(Capsule().fill(Color.black.opacity(0.4)))
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+    }
+}
+extension View { func glassCapsule() -> some View { modifier(GlassCapsule()) } }
+
+/// Toolbar button in Apple TV glass; `active` (a filter in use) gets a lighter fill.
 struct PillStyle: ViewModifier {
-    @AppStorage("accent") private var name = "red"
     let active: Bool
     func body(content: Content) -> some View {
         content.font(.callout.weight(.medium))
-            .foregroundColor(active ? Theme.onAccent(name) : nil)
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(active ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.1)))
-            .clipShape(Capsule())
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 16).frame(height: 36)
+            .background(Capsule().fill(Color.white.opacity(active ? 0.22 : 0)))
+            .glassCapsule()
+            .contentShape(Capsule())
     }
 }
 
@@ -1826,14 +1838,14 @@ struct LibraryView: View {
                     ForEach(0..<4, id: \.self) { i in
                         Button { tab = i } label: {
                             Text(i == 0 ? lib.title : ["", "Collections", "Genres", "Favorites"][i])
-                                .font(.callout.weight(.medium))
-                                .padding(.horizontal, 14).padding(.vertical, 7)
-                                .background(tab == i ? Color.white.opacity(0.28) : Color.clear)
-                                .clipShape(Capsule())
+                                .font(.callout.weight(tab == i ? .semibold : .regular))
+                                .padding(.horizontal, 18).frame(height: 32)
+                                .background(Capsule().fill(tab == i ? Color.white.opacity(0.22) : Color.clear))
                                 .foregroundColor(tab == i ? .white : .secondary)
-                        }.buttonStyle(.plain)
+                                .contentShape(Capsule())
+                        }.buttonStyle(.plain).focusEffectDisabled()
                     }
-                }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+                }.padding(4).frame(height: 40).glassCapsule()
             }
             if tab != 2 { controls }
         }
@@ -1861,7 +1873,7 @@ struct LibraryView: View {
                 }.pickerStyle(.inline)
             } label: {
                 Label(sortLabel, systemImage: desc ? "arrow.down" : "arrow.up").pill()
-            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             Menu {
                 Picker("Status", selection: $watch) {
                     Text("All").tag("all")
@@ -1874,7 +1886,7 @@ struct LibraryView: View {
                 }.pickerStyle(.inline)
             } label: {
                 Image(systemName: "line.3.horizontal.decrease.circle").pill(active: filtered)
-            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             if !genre.isEmpty {
                 Button { genre = "" } label: { Label(genre, systemImage: "xmark").pill(active: true) }.buttonStyle(.plain)
             }
@@ -1886,7 +1898,7 @@ struct LibraryView: View {
                 }
                 Button("Refresh") { Task { await load(reset: true) } }
             } label: { Image(systemName: "ellipsis").pill() }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         }
     }
 
@@ -1919,14 +1931,13 @@ struct LibraryView: View {
             ForEach([("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
                 Button { layout = m.0 } label: {
                     Image(systemName: m.1).font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 26)
-                        .background(layout == m.0 ? Color.white.opacity(0.28) : Color.clear)
+                        .frame(width: 36, height: 28)
+                        .background(Capsule().fill(layout == m.0 ? Color.white.opacity(0.22) : Color.clear))
                         .foregroundColor(layout == m.0 ? .white : .secondary)
-                        .clipShape(Capsule())
-                        .contentShape(Rectangle())
+                        .contentShape(Capsule())
                 }.buttonStyle(.plain).help(m.0 == "grid" ? "Grid view" : "List view")
             }
-        }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+        }.padding(4).frame(height: 36).glassCapsule()
     }
 
     var genreGrid: some View {
@@ -2489,14 +2500,13 @@ struct DetailView: View {
             ForEach([("row", "rectangle.split.3x1"), ("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
                 Button { epLayout = m.0 } label: {
                     Image(systemName: m.1).font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 26)
-                        .background(epLayout == m.0 ? Color.white.opacity(0.28) : Color.clear)
+                        .frame(width: 36, height: 28)
+                        .background(Capsule().fill(epLayout == m.0 ? Color.white.opacity(0.22) : Color.clear))
                         .foregroundColor(epLayout == m.0 ? .white : .secondary)
-                        .clipShape(Capsule())
-                        .contentShape(Rectangle())
+                        .contentShape(Capsule())
                 }.buttonStyle(.plain).help(m.0 == "row" ? "Row view" : m.0 == "grid" ? "Grid view" : "List view")
             }
-        }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+        }.padding(4).frame(height: 36).glassCapsule()
     }
 
 
