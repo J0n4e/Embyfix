@@ -451,8 +451,8 @@ struct TopNavBar: View {
             TopNavTools().fixedSize()
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .frame(height: 36)
-        .padding(.horizontal, 28).padding(.vertical, 12)
+        .frame(height: 40)
+        .padding(.horizontal, 28).padding(.vertical, 10)
         .background(bg)
     }
 }
@@ -469,8 +469,8 @@ struct TopNavButtons: View {
             Text(badge > 0 ? "\(title) \(badge)" : title)
                 .font(.callout.weight(on ? .semibold : .regular))
                 .foregroundColor(on ? .white : .secondary)
-                .padding(.horizontal, 18).padding(.vertical, 6)
-                .background(Capsule().fill(on ? Color.white.opacity(0.28) : Color.clear))
+                .padding(.horizontal, 18).frame(height: 32)
+                .background(Capsule().fill(on ? Color.white.opacity(0.22) : Color.clear))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -484,7 +484,10 @@ struct TopNavButtons: View {
             ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
         }
         .padding(4)
-        .background(Capsule().fill(Color.white.opacity(0.1)))
+        .frame(height: 40)
+        .background(Capsule().fill(Color.black.opacity(0.4)))
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 }
 
@@ -504,11 +507,13 @@ struct TopNavTools: View {
                 .background(Color.white.opacity(0.1)).clipShape(Capsule())
             }
             Button { nav.searchOpen.toggle(); if !nav.searchOpen { nav.query = "" } } label: {
-                Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .semibold)).padding(6).contentShape(Rectangle())
+                Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .semibold))
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color.black.opacity(0.4)))
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                    .contentShape(Circle())
             }.buttonStyle(.plain).help("Search")
-            Button { nav.showSettings = true } label: {
-                Image(systemName: "gearshape.fill").font(.system(size: 14)).padding(6).contentShape(Rectangle())
-            }.buttonStyle(.plain).help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
         }
     }
 }
@@ -530,7 +535,7 @@ struct TopBackButton: View {
             // Apple TV style: a round glass ‹ button
             Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color.white)
-                .frame(width: 34, height: 34)
+                .frame(width: 40, height: 40)
                 .background(Circle().fill(Color.black.opacity(hover ? 0.55 : 0.4)))
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))

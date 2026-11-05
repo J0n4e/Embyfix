@@ -29,64 +29,73 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Settings").font(.title2.bold())
-                Spacer()
-                Button { emby.saveLibs(); onDone(); dismiss() } label: { Text("Done").onAccent() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            }.padding(.horizontal, 20).padding(.vertical, 14)
-            Divider()
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Section.allCases) { s in
-                        Button { section = s } label: {
-                            Label(s.rawValue, systemImage: s.icon)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 10).padding(.vertical, 7)
-                                .background(section == s ? Color.white.opacity(0.14) : Color.clear)
-                                .cornerRadius(6).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                    }
-                    Spacer()
-                }
-                .frame(width: 190).padding(10)
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        switch section {
-                        case .general: GeneralSettings()
-                        case .libraries: LibrariesSettings()
-                        case .subtitles: SubtitleSettings()
-                        case .playback: PlaybackSettings()
-                        case .servers: ServerSettings()
-                        case .about: AboutSettings()
+            // Apple TV style: the section name on top, then a row of icon tabs
+            Text(section.rawValue).font(.system(size: 13, weight: .semibold)).foregroundColor(.secondary)
+                .padding(.top, 12)
+            HStack(spacing: 4) {
+                ForEach(Section.allCases) { s in
+                    let on = section == s
+                    Button { section = s } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: s.icon).font(.system(size: 20))
+                            Text(s.rawValue).font(.system(size: 11))
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(24)
+                        .foregroundColor(on ? Color(red: 0.24, green: 0.56, blue: 1) : .secondary)
+                        .frame(minWidth: 62).padding(.horizontal, 6).padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(on ? Color.white.opacity(0.1) : Color.clear))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(on ? Color.white.opacity(0.12) : Color.clear))
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain).focusEffectDisabled()
                 }
+            }.padding(.top, 8).padding(.bottom, 10)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    switch section {
+                    case .general: GeneralSettings()
+                    case .libraries: LibrariesSettings()
+                    case .subtitles: SubtitleSettings()
+                    case .playback: PlaybackSettings()
+                    case .servers: ServerSettings()
+                    case .about: AboutSettings()
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 30).padding(.vertical, 10)
             }
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).controlSize(.large)
+                Button { emby.saveLibs(); onDone(); dismiss() } label: { Text("OK").frame(minWidth: 60) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent).tint(Color(red: 0.2, green: 0.5, blue: 1)).controlSize(.large)
+            }.padding(.horizontal, 20).padding(.vertical, 12)
         }
-        .frame(width: 860, height: 580)
-        .background(bg)
+        .frame(width: 760, height: 640)
+        .background(Color(white: 0.13))
     }
 }
 
 // MARK: - Building blocks
 
+/// A section like macOS / Apple TV settings: a right-aligned "Title:" label, the controls beside it,
+/// and a thin line under it.
 struct SettingsGroup<C: View>: View {
     let title: String
     var note: String? = nil
     @ViewBuilder var content: C
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.headline)
-            VStack(alignment: .leading, spacing: 12) { content }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white.opacity(0.06)).cornerRadius(8)
-            if let note { Text(note).font(.caption).foregroundColor(.secondary) }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(title + ":").frame(width: 170, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 10) {
+                    content
+                    if let note { Text(note).font(.callout).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 16)
+            Divider()
         }
     }
 }
@@ -95,10 +104,10 @@ struct SettingRow<C: View>: View {
     let label: String
     @ViewBuilder var control: C
     var body: some View {
-        HStack {
-            Text(label)
-            Spacer()
+        HStack(spacing: 10) {
+            Text(label).foregroundColor(.secondary)
             control
+            Spacer(minLength: 0)
         }
     }
 }
@@ -166,7 +175,7 @@ struct GeneralSettings: View {
                     Text("Top bar").tag("topbar")
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
             }.padding(.top, 4)
-            Text("Top bar replaces the sidebar with a Netflix-style bar across the top (Home, Favorites, libraries, search and Settings).")
+            Text("Top bar replaces the sidebar with a bar across the top (Home, Favorites, libraries and search). Settings are in the Cove menu (⌘,).")
                 .font(.caption).foregroundColor(.secondary)
         }
     }
@@ -310,7 +319,7 @@ struct LibrariesSettings: View {
     }
 
     var body: some View {
-        SettingsGroup(title: "Default view for new libraries") {
+        SettingsGroup(title: "New libraries") {
             SettingRow(label: "Layout") { segmented($defaultLayout, [("grid", "Grid"), ("list", "List")]) }
         }
         SettingsGroup(title: "Poster labels") {
