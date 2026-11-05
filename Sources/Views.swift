@@ -751,7 +751,7 @@ struct SessionCard: View {
 
     var icon: String {
         let c = (s.Client ?? "").lowercased() + " " + (s.DeviceName ?? "").lowercased()
-        if c.contains("embyflix") || c.contains("mac") { return "desktopcomputer" }
+        if c.contains("cove") || c.contains("embyflix") || c.contains("mac") { return "desktopcomputer" }
         if c.contains("web") || c.contains("chrome") || c.contains("firefox") || c.contains("safari") { return "globe" }
         if c.contains("iphone") || c.contains("ios") || c.contains("android") { return "iphone" }
         if c.contains("tv") || c.contains("roku") || c.contains("kodi") { return "tv" }
@@ -2863,7 +2863,7 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    // MARK: debug log (~/Library/Logs/EmbyFlix.log)
+    // MARK: debug log (~/Library/Logs/Cove.log)
     private func fmt(_ t: Double) -> String { String(format: "%.2fs", t) }
     private func startDebugPolling() {
         logServer()
@@ -2882,7 +2882,7 @@ final class PlayerModel: ObservableObject {
     }
     func dlog(_ m: String) {
         let line = "\(ISO8601DateFormatter().string(from: Date())) \(m)\n"
-        let u = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/EmbyFlix.log")
+        let u = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Cove.log")
         if let h = try? FileHandle(forWritingTo: u) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
         else { try? Data(line.utf8).write(to: u) }
     }
@@ -3931,7 +3931,7 @@ enum KeepAwake {
         if !owners.isEmpty, id == 0 {
             IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
                                         IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                        "EmbyFlix is playing a video" as CFString, &id)
+                                        "Cove is playing a video" as CFString, &id)
         } else if owners.isEmpty, id != 0 {
             IOPMAssertionRelease(id)
             id = 0

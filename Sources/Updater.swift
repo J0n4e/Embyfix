@@ -123,7 +123,7 @@ final class Updater: ObservableObject {
         }
         status = .installing
         do {
-            let work = FileManager.default.temporaryDirectory.appendingPathComponent("EmbyFlixUpdate-\(UUID().uuidString)")
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("CoveUpdate-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let (tmp, resp) = try await URLSession.shared.download(from: url)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw Err("Download failed.") }
@@ -131,8 +131,9 @@ final class Updater: ObservableObject {
             try FileManager.default.moveItem(at: tmp, to: zip)
             let out = work.appendingPathComponent("new")
             guard await run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
-            let newApp = out.appendingPathComponent("EmbyFlix.app")
-            guard FileManager.default.fileExists(atPath: newApp.path) else { throw Err("The download didn't contain the app.") }
+            // Any app in the zip: releases ship EmbyFlix.app (so older updaters can still install them) and later Cove.app
+            let found = (try? FileManager.default.contentsOfDirectory(at: out, includingPropertiesForKeys: nil)) ?? []
+            guard let newApp = found.first(where: { $0.pathExtension == "app" }) else { throw Err("The download didn't contain the app.") }
             guard await run("/usr/bin/codesign", ["-v", newApp.path]) == 0 else { throw Err("The downloaded app failed its signature check.") }
             try relaunch(replacing: target, with: newApp, work: work)
         } catch {
@@ -141,20 +142,22 @@ final class Updater: ObservableObject {
     }
 
     /// Hands off to a small shell script that waits for us to quit, swaps the bundle (restoring the old one if
-    /// anything fails), clears quarantine and opens the new app.
+    /// anything fails), clears quarantine and opens the new app. The app is installed as Cove.app next to the
+    /// old one, so an EmbyFlix.app install is renamed with its first update.
     private func relaunch(replacing target: URL, with newApp: URL, work: URL) throws {
         let script = """
         #!/bin/sh
         while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
-        T="$2"; N="$3"
+        T="$2"; N="$3"; D="$(dirname "$T")/Cove.app"
         rm -rf "$T.old"
-        if mv "$T" "$T.old" && ditto "$N" "$T"; then
+        [ "$D" != "$T" ] && rm -rf "$D"
+        if mv "$T" "$T.old" && ditto "$N" "$D"; then
           rm -rf "$T.old"
         else
-          rm -rf "$T"; mv "$T.old" "$T"
+          rm -rf "$D"; mv "$T.old" "$T"; D="$T"
         fi
-        xattr -dr com.apple.quarantine "$T" 2>/dev/null
-        open "$T"
+        xattr -dr com.apple.quarantine "$D" 2>/dev/null
+        open "$D"
         rm -rf "$4"
         """
         let s = work.appendingPathComponent("swap.sh")

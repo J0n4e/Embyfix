@@ -282,7 +282,7 @@ final class Emby: ObservableObject {
     }
 
     var authHeader: String {
-        "MediaBrowser Client=\"EmbyFlix\", Device=\"Mac\", DeviceId=\"\(deviceId)\", Version=\"1.0\""
+        "MediaBrowser Client=\"Cove\", Device=\"Mac\", DeviceId=\"\(deviceId)\", Version=\"1.0\""
     }
 
     func login(server raw: String, user: String, pw: String) async throws {
@@ -693,7 +693,7 @@ final class Emby: ObservableObject {
         let id = req.item.id
         let canDirect = direct && !req.transcode
         let profile: [String: Any] = [
-            "Name": "EmbyFlix Mac",
+            "Name": "Cove Mac",
             "MaxStreamingBitrate": req.maxBitrate ?? 120_000_000,
             "DirectPlayProfiles": canDirect
                 ? [["Container": "mp4,m4v,mov", "Type": "Video", "VideoCodec": "h264,hevc", "AudioCodec": "aac,ac3,eac3,mp3"]]

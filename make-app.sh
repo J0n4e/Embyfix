@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds a release EmbyFlix.app (with icon) in ./dist
+# Builds a release app (with icon) in ./dist. The app is called Cove; the bundle file stays EmbyFlix.app
+# for now so updaters of 1.8.3 and older (which look for EmbyFlix.app in the download) can install it.
 set -euo pipefail
 cd "$(dirname "$0")"
 APP=dist/EmbyFlix.app
@@ -29,8 +30,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>EmbyFlix</string>
-  <key>CFBundleDisplayName</key><string>EmbyFlix</string>
+  <key>CFBundleName</key><string>Cove</string>
+  <key>CFBundleDisplayName</key><string>Cove</string>
   <key>CFBundleIdentifier</key><string>EmbyFlix</string>
   <key>CFBundleExecutable</key><string>EmbyFlix</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
