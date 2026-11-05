@@ -111,13 +111,11 @@ struct LoginView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 14) {
-                Text("EMBYFLIX").font(.system(size: 44, weight: .black)).foregroundStyle(.tint)
                 if showForm { form } else { serverList }
                 if !error.isEmpty { Text(error).foregroundColor(.orange).font(.caption).multilineTextAlignment(.center) }
             }
             .frame(width: showForm ? 340 : 520).padding(36)
             .background(Color.black.opacity(0.75)).cornerRadius(8)
-            VStack { Spacer(); Text("EmbyFlix \(AppVersion.label)").font(.caption).foregroundColor(.secondary).padding(12) }
         }
     }
 
@@ -296,10 +294,6 @@ struct HomeView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint)
-                        Text(AppVersion.label).font(.caption2).foregroundColor(.secondary)
-                    }.padding(.horizontal, 4)
                     Button { emby.switchServer() } label: {
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -428,7 +422,7 @@ struct TitleBarItems: ToolbarContent {
     }
 }
 
-/// Top bar layout: the row under the title bar with Back (on pushed pages) and the EMBYFLIX name on the left,
+/// Top bar layout: the row under the title bar with Back (on pushed pages) on the left,
 /// the navigation pill in the middle and search and Settings on the right. It stays in place on every page.
 /// Laid out side by side, so a long pill never covers search and Settings.
 struct TopNavBar: View {
@@ -437,7 +431,6 @@ struct TopNavBar: View {
     var body: some View {
         HStack(spacing: 16) {
             if let back { TopBackButton(action: back) }
-            Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint).fixedSize()
             Spacer(minLength: 0)
             TopNavButtons()
             Spacer(minLength: 0)

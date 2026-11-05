@@ -186,9 +186,10 @@ struct GeneralSettings: View {
             Button("Reset", role: .destructive) { resetAllSettings() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Everything goes back to its default. You stay signed in. Quit and reopen EmbyFlix afterwards so the window starts fresh.")
+            Text("Everything goes back to its default. You stay signed in. Quit and reopen the app afterwards so the window starts fresh.")
         }
         SettingsGroup(title: "About") {
+            SettingRow(label: "App") { Text("Cove").foregroundColor(.secondary) }
             SettingRow(label: "Version") {
                 Text(AppVersion.build.isEmpty ? AppVersion.label : "\(AppVersion.label) (build \(AppVersion.build))")
                     .foregroundColor(.secondary).textSelection(.enabled)
