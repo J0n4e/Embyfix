@@ -111,13 +111,11 @@ struct LoginView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 14) {
-                Text("EMBYFLIX").font(.system(size: 44, weight: .black)).foregroundStyle(.tint)
                 if showForm { form } else { serverList }
                 if !error.isEmpty { Text(error).foregroundColor(.orange).font(.caption).multilineTextAlignment(.center) }
             }
             .frame(width: showForm ? 340 : 520).padding(36)
             .background(Color.black.opacity(0.75)).cornerRadius(8)
-            VStack { Spacer(); Text("EmbyFlix \(AppVersion.label)").font(.caption).foregroundColor(.secondary).padding(12) }
         }
     }
 
@@ -296,10 +294,6 @@ struct HomeView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint)
-                        Text(AppVersion.label).font(.caption2).foregroundColor(.secondary)
-                    }.padding(.horizontal, 4)
                     Button { emby.switchServer() } label: {
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -368,9 +362,13 @@ struct HomeView: View {
 
     // MARK: Top bar navigation (Settings → General → Appearance → Navigation)
 
-    /// Top bar layout: the navigation lives in the window's toolbar (see TitleBarItems), so the page area is all that is left here.
+    /// Top bar layout: a navigation row under the title bar (see TopNavBar), with the page area below it.
     var topLayout: some View {
-        detailPane(withSearch: false).background(bg)
+        VStack(spacing: 0) {
+            // In front of the page, so nothing on a page can cover its buttons. Back sits in the bar on pushed pages.
+            TopNavBar(back: path.isEmpty ? nil : { path.removeLast() }).zIndex(1)
+            detailPane(withSearch: false).clipped()
+        }.background(bg)
     }
 
     var body: some View {
@@ -413,30 +411,36 @@ final class NavState: ObservableObject {
     var popToRoot: () -> Void = {}
 }
 
-/// Window toolbar contents: the Back pill on pushed pages and, with the Top bar layout, the navigation
-/// buttons, search and Settings (living in the title bar they stay clickable on every page).
+/// Window toolbar contents: the Back pill on pushed pages. (In the Top bar layout the navigation and Back
+/// sit in their own row under the title bar, see TopNavBar.)
 struct TitleBarItems: ToolbarContent {
     let back: (() -> Void)?
-    /// The navigation buttons come from the first page's toolbar only: pushed pages' toolbars are merged with it,
-    /// so repeating them there showed everything twice.
-    var topBar: Bool { back == nil && UserDefaults.standard.string(forKey: "navStyle") == "topbar" }
     var body: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 14) {
-                if let back {
-                    // In the Top bar layout the EMBYFLIX name sits right before the pill: leave some air between them
-                    TopBackButton(action: back)
-                        .padding(.leading, UserDefaults.standard.string(forKey: "navStyle") == "topbar" ? 16 : 0)
-                }
-                if topBar { Text("EMBYFLIX").font(.system(size: 16, weight: .black)).foregroundStyle(.tint) }
-            }
+            if let back, UserDefaults.standard.string(forKey: "navStyle") != "topbar" { TopBackButton(action: back) }
         }
-        ToolbarItem(placement: .principal) {
-            if topBar { TopNavButtons() }
+    }
+}
+
+/// Top bar layout: the row under the title bar with Back (on pushed pages) on the left,
+/// the navigation pill in the middle and search and Settings on the right. It stays in place on every page.
+/// Laid out side by side, so a long pill never covers search and Settings.
+struct TopNavBar: View {
+    @Environment(\.appBG) var bg
+    let back: (() -> Void)?
+    var body: some View {
+        // The two sides share the leftover width equally, so the pill stays in the middle of the window, and the
+        // fixed height keeps the bar from growing: nothing moves when Back appears or disappears.
+        HStack(spacing: 16) {
+            HStack { if let back { TopBackButton(action: back) } }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            TopNavButtons().layoutPriority(1)
+            TopNavTools().fixedSize()
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        ToolbarItem(placement: .primaryAction) {
-            if topBar { TopNavTools() }
-        }
+        .frame(height: 36)
+        .padding(.horizontal, 28).padding(.vertical, 12)
+        .background(bg)
     }
 }
 
@@ -451,11 +455,13 @@ struct TopNavButtons: View {
         } label: {
             Text(badge > 0 ? "\(title) \(badge)" : title)
                 .font(.callout.weight(on ? .semibold : .regular))
-                .foregroundColor(on ? .black : .primary)
-                .padding(.horizontal, 14).padding(.vertical, 5)
-                .background(Capsule().fill(on ? Color.white : Color.clear))
+                .foregroundColor(on ? .white : .secondary)
+                .padding(.horizontal, 18).padding(.vertical, 6)
+                .background(Capsule().fill(on ? Color.white.opacity(0.28) : Color.clear))
                 .contentShape(Capsule())
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()   // no blue keyboard-focus ring around a section
     }
     var body: some View {
         HStack(spacing: 4) {
@@ -464,6 +470,8 @@ struct TopNavButtons: View {
             item("Now Playing", "nowplaying", badge: nav.activeCount)
             ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
         }
+        .padding(4)
+        .background(Capsule().fill(Color.white.opacity(0.1)))
     }
 }
 
@@ -954,7 +962,8 @@ struct Hero: View {
     var body: some View {
         let item = items[index % items.count]
         ZStack(alignment: .bottomLeading) {
-            Backdrop(id: item.backdropId ?? item.Id).frame(height: 440).frame(maxWidth: .infinity).clipped()
+            Color.clear.frame(maxWidth: .infinity).frame(height: 440)
+                .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
                 .id("b" + item.id).transition(.opacity)
             VStack(alignment: .leading, spacing: 14) {
                 Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2).blackOutline(2)
@@ -1947,7 +1956,11 @@ struct DetailView: View {
         }
         .background(alignment: .top) {
             ZStack {
-                Backdrop(id: item.backdropId ?? item.Id).frame(height: 520).clipped().opacity(0.35)
+                // Fill the page width without growing it: a filled image sized by its own width made the whole
+                // page wider than the window (pushing the Top bar's Search and Settings off screen)
+                Color.clear.frame(height: 520)
+                    .overlay { Backdrop(id: item.backdropId ?? item.Id) }
+                    .clipped().opacity(0.35)
                 LinearGradient(colors: [Color.clear, bg], startPoint: .top, endPoint: .bottom)
             }.frame(height: 520)
         }
@@ -2981,11 +2994,11 @@ struct PlayerView: View {
     static let inPlayerBackPill = false
 
     /// Windowed player: Back pill up in the title bar, where the app's own Back pill sits on a page
-    /// (right after the EMBYFLIX name in the Top bar layout, right after the window buttons otherwise).
+    /// (right after the window buttons).
     /// Not drawn in full screen, where Esc leaves the player.
     var titleBarBack: some View {
         let h = titleBarHeight
-        let x: CGFloat = UserDefaults.standard.string(forKey: "navStyle") == "topbar" ? 176 : 80
+        let x: CGFloat = 80
         let visible = h > 0 && (showUI || panel != nil)
         return VStack(spacing: 0) {
             HStack(spacing: 0) {

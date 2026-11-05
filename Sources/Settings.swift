@@ -10,7 +10,7 @@ struct SettingsView: View {
 
     enum Section: String, CaseIterable, Identifiable {
         case general = "General", libraries = "Libraries",
-             subtitles = "Subtitles", playback = "Playback", servers = "Servers"
+             subtitles = "Subtitles", playback = "Playback", servers = "Servers", about = "About"
         var id: String { rawValue }
         var icon: String {
             switch self {
@@ -19,6 +19,7 @@ struct SettingsView: View {
             case .subtitles: return "captions.bubble"
             case .playback: return "play.rectangle"
             case .servers: return "server.rack"
+            case .about: return "info.circle"
             }
         }
     }
@@ -57,6 +58,7 @@ struct SettingsView: View {
                         case .subtitles: SubtitleSettings()
                         case .playback: PlaybackSettings()
                         case .servers: ServerSettings()
+                        case .about: AboutSettings()
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -117,19 +119,6 @@ struct GeneralSettings: View {
     @AppStorage("accent") private var accent = "red"
     @AppStorage("bg") private var bg = "black"
     @AppStorage("navStyle") private var navStyle = "sidebar"
-    @EnvironmentObject var emby: Emby
-    @State private var confirmReset = false
-
-    /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
-    /// order and window positions). The saved servers and sign-ins are kept.
-    func resetAllSettings() {
-        let keep: Set<String> = ["server", "token", "uid", "servers", "did"]
-        let d = UserDefaults.standard
-        for key in d.dictionaryRepresentation().keys where !keep.contains(key) {
-            d.removeObject(forKey: key)
-        }
-        Task { await emby.loadLibs() }
-    }
 
     func swatches(_ list: [(String, Color)], selection: Binding<String>) -> some View {
         HStack(spacing: 14) {
@@ -178,17 +167,30 @@ struct GeneralSettings: View {
             Text("Top bar replaces the sidebar with a Netflix-style bar across the top (Home, Favorites, libraries, search and Settings).")
                 .font(.caption).foregroundColor(.secondary)
         }
-        SettingsGroup(title: "Reset",
-                      note: "Puts every setting back to its default: colors, navigation, layouts, filters, hover preview, subtitles, player and window position. Your servers and sign-in are kept.") {
-            Button("Reset all settings to default…", role: .destructive) { confirmReset = true }
+    }
+}
+
+// MARK: - About
+
+/// The last section: app name, version, updates and source link, then Reset.
+struct AboutSettings: View {
+    @EnvironmentObject var emby: Emby
+    @State private var confirmReset = false
+
+    /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
+    /// order and window positions). The saved servers and sign-ins are kept.
+    func resetAllSettings() {
+        let keep: Set<String> = ["server", "token", "uid", "servers", "did"]
+        let d = UserDefaults.standard
+        for key in d.dictionaryRepresentation().keys where !keep.contains(key) {
+            d.removeObject(forKey: key)
         }
-        .alert("Reset all settings?", isPresented: $confirmReset) {
-            Button("Reset", role: .destructive) { resetAllSettings() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Everything goes back to its default. You stay signed in. Quit and reopen EmbyFlix afterwards so the window starts fresh.")
-        }
+        Task { await emby.loadLibs() }
+    }
+
+    var body: some View {
         SettingsGroup(title: "About") {
+            SettingRow(label: "App") { Text("Cove").foregroundColor(.secondary) }
             SettingRow(label: "Version") {
                 Text(AppVersion.build.isEmpty ? AppVersion.label : "\(AppVersion.label) (build \(AppVersion.build))")
                     .foregroundColor(.secondary).textSelection(.enabled)
@@ -197,6 +199,16 @@ struct GeneralSettings: View {
             SettingRow(label: "Source & releases") {
                 Link("github.com/J0n4e/Embyfix", destination: URL(string: "https://github.com/J0n4e/Embyfix/releases")!)
             }
+        }
+        SettingsGroup(title: "Reset",
+                      note: "Puts every setting back to its default: colors, navigation, layouts, filters, hover preview, subtitles, player and window position. Your servers and sign-in are kept.") {
+            Button("Reset all settings to default…", role: .destructive) { confirmReset = true }
+        }
+        .alert("Reset all settings?", isPresented: $confirmReset) {
+            Button("Reset", role: .destructive) { resetAllSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Everything goes back to its default. You stay signed in. Quit and reopen the app afterwards so the window starts fresh.")
         }
     }
 }
@@ -446,6 +458,9 @@ struct ServerSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Account") {
+            if let user = emby.currentServer?.user, !user.isEmpty {
+                SettingRow(label: "User") { Text(user).foregroundColor(.secondary).textSelection(.enabled) }
+            }
             SettingRow(label: "Signed in to \(emby.currentServerName)") {
                 Button("Sign Out", role: .destructive) { emby.logout() }
             }

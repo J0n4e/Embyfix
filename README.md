@@ -20,7 +20,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Sign in to one or more Emby servers (http or https). Saved servers can be switched from the sidebar.
 - Home page with a rotating featured banner (white text with a black outline over the picture), Continue Watching, and rows for each library.
 - **Continue Watching** cards show the title bottom-left, "S3·E3 · 42m left" (or the time left for a movie) top-left and a white progress ring bottom-right. The play button resumes; clicking the card opens the series page on that season (or the movie page).
-- **Navigation:** a sidebar, or a Netflix-style **top bar** in the title bar (Home, Favorites, Now Playing, your libraries, search and Settings). Choose it under Settings → General → Appearance → Navigation.
+- **Navigation:** a sidebar, or a **top bar** under the title bar: EMBYFLIX on the left, a pill with Home, Favorites, Now Playing, your libraries in the middle, search and Settings on the right. Choose it under Settings → General → Appearance → Navigation.
 - Library pages:
   - grid or list view
   - sort and filter (watched, unwatched, genre), with an A–Z jump bar
@@ -54,7 +54,7 @@ After that, EmbyFlix keeps itself up to date. It checks for new releases at laun
 - Keyboard: Space play/pause (or play the next episode when the Up next card shows), ← → skip, F full screen, E episodes, C chapters, I info, P picture in picture, Esc back.
 
 ### Settings (⌘,)
-General (accent color, background, navigation style, **Reset all settings to default**), Libraries (**Poster labels**, hover preview, episode layout and description, library list), Subtitles, Playback, Servers (saved servers and **Sign Out**), and About with the update controls.
+General (accent color, background, navigation style), Libraries (**Poster labels**, hover preview, episode layout and description, library list), Subtitles, Playback, Servers (saved servers and **Sign Out**), and About (version, update controls and **Reset all settings to default**).
 
 > Intro skipping and thumbnail previews depend on your Emby server: intro detection and thumbnail-image extraction must be enabled there.
 
@@ -65,13 +65,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.8 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.8.1 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.8`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.8.1`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 

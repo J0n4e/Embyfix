@@ -40,7 +40,7 @@ final class Updater: ObservableObject {
     func check(interactive: Bool) async {
         guard let cur = current else {
             status = .failed("Updates work only in the built app.")
-            if interactive { alert("Can't check for updates", "This copy isn't a built EmbyFlix.app.") }
+            if interactive { alert("Can't check for updates", "This copy isn't a built app bundle.") }
             return
         }
         status = .checking
@@ -60,7 +60,7 @@ final class Updater: ObservableObject {
             prompt(rel, current: cur)
         } else {
             status = .upToDate
-            if interactive { alert("You're up to date", "EmbyFlix \(AppVersion.pretty(cur)) is the latest version.") }
+            if interactive { alert("You're up to date", "\(AppVersion.pretty(cur)) is the latest version.") }
         }
     }
 
@@ -95,7 +95,7 @@ final class Updater: ObservableObject {
         var notes = (rel.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if notes.count > 700 { notes = String(notes.prefix(700)) + "…" }
         let a = NSAlert()
-        a.messageText = "EmbyFlix \(AppVersion.pretty(rel.tag_name)) is available"
+        a.messageText = "Version \(AppVersion.pretty(rel.tag_name)) is available"
         a.informativeText = "You have \(AppVersion.pretty(current)).\n\n\(notes)"
         a.addButton(withTitle: "Install and Relaunch")
         a.addButton(withTitle: "Later")
@@ -132,7 +132,7 @@ final class Updater: ObservableObject {
             let out = work.appendingPathComponent("new")
             guard await run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
             let newApp = out.appendingPathComponent("EmbyFlix.app")
-            guard FileManager.default.fileExists(atPath: newApp.path) else { throw Err("The download didn't contain EmbyFlix.app.") }
+            guard FileManager.default.fileExists(atPath: newApp.path) else { throw Err("The download didn't contain the app.") }
             guard await run("/usr/bin/codesign", ["-v", newApp.path]) == 0 else { throw Err("The downloaded app failed its signature check.") }
             try relaunch(replacing: target, with: newApp, work: work)
         } catch {
