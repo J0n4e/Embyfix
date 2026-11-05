@@ -163,7 +163,11 @@ final class Updater: ObservableObject {
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = [s.path, String(ProcessInfo.processInfo.processIdentifier), target.path, newApp.path, work.path]
         try p.run()
+        // An open sheet (Settings, where the update is usually started) can keep the app from quitting, and the
+        // script then waits forever. Close sheets first, and if the app is still running a moment later, quit anyway.
+        for w in NSApp.windows { for sheet in w.sheets { w.endSheet(sheet) } }
         NSApp.terminate(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { exit(0) }
     }
 
     private func run(_ tool: String, _ args: [String]) async -> Int32 {
