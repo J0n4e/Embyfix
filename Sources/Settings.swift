@@ -192,7 +192,7 @@ struct AboutSettings: View {
         SettingsGroup(title: "About") {
             SettingRow(label: "App") { Text("Cove").foregroundColor(.secondary) }
             SettingRow(label: "Version") {
-                Text(AppVersion.build.isEmpty ? AppVersion.label : "\(AppVersion.label) (build \(AppVersion.build))")
+                Text(AppVersion.label)
                     .foregroundColor(.secondary).textSelection(.enabled)
             }
             SettingRow(label: "Updates") { UpdateRow() }
