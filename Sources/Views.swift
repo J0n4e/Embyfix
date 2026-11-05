@@ -368,9 +368,12 @@ struct HomeView: View {
 
     // MARK: Top bar navigation (Settings → General → Appearance → Navigation)
 
-    /// Top bar layout: the navigation lives in the window's toolbar (see TitleBarItems), so the page area is all that is left here.
+    /// Top bar layout: a navigation row under the title bar (see TopNavBar), with the page area below it.
     var topLayout: some View {
-        detailPane(withSearch: false).background(bg)
+        VStack(spacing: 0) {
+            TopNavBar()
+            detailPane(withSearch: false)
+        }.background(bg)
     }
 
     var body: some View {
@@ -413,30 +416,32 @@ final class NavState: ObservableObject {
     var popToRoot: () -> Void = {}
 }
 
-/// Window toolbar contents: the Back pill on pushed pages and, with the Top bar layout, the navigation
-/// buttons, search and Settings (living in the title bar they stay clickable on every page).
+/// Window toolbar contents: the Back pill on pushed pages. (The Top bar layout's navigation sits in its own
+/// row under the title bar, see TopNavBar.)
 struct TitleBarItems: ToolbarContent {
     let back: (() -> Void)?
-    /// The navigation buttons come from the first page's toolbar only: pushed pages' toolbars are merged with it,
-    /// so repeating them there showed everything twice.
-    var topBar: Bool { back == nil && UserDefaults.standard.string(forKey: "navStyle") == "topbar" }
     var body: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 14) {
-                if let back {
-                    // In the Top bar layout the EMBYFLIX name sits right before the pill: leave some air between them
-                    TopBackButton(action: back)
-                        .padding(.leading, UserDefaults.standard.string(forKey: "navStyle") == "topbar" ? 16 : 0)
-                }
-                if topBar { Text("EMBYFLIX").font(.system(size: 16, weight: .black)).foregroundStyle(.tint) }
+            if let back { TopBackButton(action: back) }
+        }
+    }
+}
+
+/// Top bar layout: the row under the title bar with the EMBYFLIX name on the left, the navigation pill
+/// in the middle and search and Settings on the right. It stays in place on every page.
+struct TopNavBar: View {
+    @Environment(\.appBG) var bg
+    var body: some View {
+        ZStack {
+            HStack {
+                Text("EMBYFLIX").font(.system(size: 20, weight: .black)).foregroundStyle(.tint)
+                Spacer()
+                TopNavTools()
             }
+            TopNavButtons()
         }
-        ToolbarItem(placement: .principal) {
-            if topBar { TopNavButtons() }
-        }
-        ToolbarItem(placement: .primaryAction) {
-            if topBar { TopNavTools() }
-        }
+        .padding(.horizontal, 28).padding(.vertical, 12)
+        .background(bg)
     }
 }
 
@@ -451,9 +456,9 @@ struct TopNavButtons: View {
         } label: {
             Text(badge > 0 ? "\(title) \(badge)" : title)
                 .font(.callout.weight(on ? .semibold : .regular))
-                .foregroundColor(on ? .black : .primary)
-                .padding(.horizontal, 14).padding(.vertical, 5)
-                .background(Capsule().fill(on ? Color.white : Color.clear))
+                .foregroundColor(on ? .white : .secondary)
+                .padding(.horizontal, 18).padding(.vertical, 6)
+                .background(Capsule().fill(on ? Color.white.opacity(0.28) : Color.clear))
                 .contentShape(Capsule())
         }.buttonStyle(.plain)
     }
@@ -464,6 +469,8 @@ struct TopNavButtons: View {
             item("Now Playing", "nowplaying", badge: nav.activeCount)
             ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
         }
+        .padding(4)
+        .background(Capsule().fill(Color.white.opacity(0.1)))
     }
 }
 
@@ -2981,11 +2988,11 @@ struct PlayerView: View {
     static let inPlayerBackPill = false
 
     /// Windowed player: Back pill up in the title bar, where the app's own Back pill sits on a page
-    /// (right after the EMBYFLIX name in the Top bar layout, right after the window buttons otherwise).
+    /// (right after the window buttons).
     /// Not drawn in full screen, where Esc leaves the player.
     var titleBarBack: some View {
         let h = titleBarHeight
-        let x: CGFloat = UserDefaults.standard.string(forKey: "navStyle") == "topbar" ? 176 : 80
+        let x: CGFloat = 80
         let visible = h > 0 && (showUI || panel != nil)
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
