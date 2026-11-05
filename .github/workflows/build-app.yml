@@ -1,4 +1,4 @@
-name: Build EmbyFlix.app
+name: Build Cove.app
 
 # Manual only: run from the Actions tab ("Run workflow").
 on:
@@ -28,10 +28,10 @@ jobs:
           ./make-app.sh
 
       - name: Zip app
-        run: cd dist && ditto -c -k --keepParent EmbyFlix.app EmbyFlix.zip
+        run: cd dist && ditto -c -k --keepParent Cove.app Cove.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EmbyFlix-app
-          path: dist/EmbyFlix.zip
+          name: Cove-app
+          path: dist/Cove.zip

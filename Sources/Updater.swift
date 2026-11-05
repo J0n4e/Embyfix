@@ -7,7 +7,7 @@ final class Updater: ObservableObject {
     static let shared = Updater()
     static let repo = "J0n4e/Embyfix"
 
-    enum Status: Equatable { case idle, checking, upToDate, available(String), movedToCove(String), installing, failed(String) }
+    enum Status: Equatable { case idle, checking, upToDate, available(String), installing, failed(String) }
     @Published var status: Status = .idle
     private var latest: Release?
     private var checkedThisLaunch = false
@@ -18,13 +18,11 @@ final class Updater: ObservableObject {
         let html_url: String
         let assets: [Asset]
         struct Asset: Decodable { let name: String; let browser_download_url: String }
-        /// EmbyFlix became Cove, a separate app (Cove.zip on its releases): it can't be installed over EmbyFlix.
-        var isCove: Bool { assets.contains { $0.name.lowercased().hasPrefix("cove") } }
     }
 
     /// Raw version from the bundle ("v1.2"), nil when run outside a built app.
     var current: String? {
-        let v = Bundle.main.infoDictionary?["EmbyFlixVersion"] as? String
+        let v = Bundle.main.infoDictionary?["CoveVersion"] as? String
         return (v?.isEmpty ?? true) ? nil : v
     }
 
@@ -57,10 +55,7 @@ final class Updater: ObservableObject {
             return
         }
         latest = rel
-        if Self.isNewer(rel.tag_name, than: cur), rel.isCove {
-            status = .movedToCove(rel.tag_name)
-            promptCove(rel)
-        } else if Self.isNewer(rel.tag_name, than: cur) {
+        if Self.isNewer(rel.tag_name, than: cur) {
             status = .available(rel.tag_name)
             prompt(rel, current: cur)
         } else {
@@ -96,20 +91,6 @@ final class Updater: ObservableObject {
         a.runModal()
     }
 
-    /// Tells the user EmbyFlix is now Cove and sends them to its download page.
-    private func promptCove(_ rel: Release) {
-        let a = NSAlert()
-        a.messageText = "EmbyFlix is now Cove"
-        a.informativeText = "Cove \(AppVersion.pretty(rel.tag_name)) replaces EmbyFlix and is a separate download, so it can't be installed from here.\n\nDownload Cove from GitHub and move it to Applications. Your settings and saved servers carry over the first time you open it. You can delete EmbyFlix afterwards."
-        a.addButton(withTitle: "Download Cove")
-        a.addButton(withTitle: "Later")
-        if a.runModal() == .alertFirstButtonReturn { openCovePage() }
-    }
-
-    func openCovePage() {
-        if let u = URL(string: latest?.html_url ?? "https://github.com/\(Self.repo)/releases/latest") { NSWorkspace.shared.open(u) }
-    }
-
     private func prompt(_ rel: Release, current: String) {
         var notes = (rel.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if notes.count > 700 { notes = String(notes.prefix(700)) + "…" }
@@ -129,7 +110,6 @@ final class Updater: ObservableObject {
     // MARK: Install
 
     func install() async {
-        if latest?.isCove == true { openCovePage(); return }
         guard let rel = latest,
               let asset = rel.assets.first(where: { $0.name.hasSuffix(".zip") }),
               let url = URL(string: asset.browser_download_url) else {
@@ -143,7 +123,7 @@ final class Updater: ObservableObject {
         }
         status = .installing
         do {
-            let work = FileManager.default.temporaryDirectory.appendingPathComponent("EmbyFlixUpdate-\(UUID().uuidString)")
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("CoveUpdate-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let (tmp, resp) = try await URLSession.shared.download(from: url)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw Err("Download failed.") }
@@ -151,8 +131,9 @@ final class Updater: ObservableObject {
             try FileManager.default.moveItem(at: tmp, to: zip)
             let out = work.appendingPathComponent("new")
             guard await run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
-            let newApp = out.appendingPathComponent("EmbyFlix.app")
-            guard FileManager.default.fileExists(atPath: newApp.path) else { throw Err("The download didn't contain the app.") }
+            // Any app in the zip (releases ship Cove.app)
+            let found = (try? FileManager.default.contentsOfDirectory(at: out, includingPropertiesForKeys: nil)) ?? []
+            guard let newApp = found.first(where: { $0.pathExtension == "app" }) else { throw Err("The download didn't contain the app.") }
             guard await run("/usr/bin/codesign", ["-v", newApp.path]) == 0 else { throw Err("The downloaded app failed its signature check.") }
             try relaunch(replacing: target, with: newApp, work: work)
         } catch {
@@ -161,20 +142,22 @@ final class Updater: ObservableObject {
     }
 
     /// Hands off to a small shell script that waits for us to quit, swaps the bundle (restoring the old one if
-    /// anything fails), clears quarantine and opens the new app.
+    /// anything fails), clears quarantine and opens the new app. It is always installed as Cove.app, so a copy
+    /// renamed by hand gets its proper name back with the next update.
     private func relaunch(replacing target: URL, with newApp: URL, work: URL) throws {
         let script = """
         #!/bin/sh
         while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
-        T="$2"; N="$3"
+        T="$2"; N="$3"; D="$(dirname "$T")/Cove.app"
         rm -rf "$T.old"
-        if mv "$T" "$T.old" && ditto "$N" "$T"; then
+        [ "$D" != "$T" ] && rm -rf "$D"
+        if mv "$T" "$T.old" && ditto "$N" "$D"; then
           rm -rf "$T.old"
         else
-          rm -rf "$T"; mv "$T.old" "$T"
+          rm -rf "$D"; mv "$T.old" "$T"; D="$T"
         fi
-        xattr -dr com.apple.quarantine "$T" 2>/dev/null
-        open "$T"
+        xattr -dr com.apple.quarantine "$D" 2>/dev/null
+        open "$D"
         rm -rf "$4"
         """
         let s = work.appendingPathComponent("swap.sh")
@@ -221,7 +204,6 @@ struct UpdateRow: View {
         case .checking: return "Checking…"
         case .upToDate: return "Up to date"
         case .available(let v): return "\(AppVersion.pretty(v)) available"
-        case .movedToCove: return "EmbyFlix is now Cove, a separate download."
         case .installing: return "Downloading and installing…"
         case .failed(let m): return m
         }
@@ -230,9 +212,7 @@ struct UpdateRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                if case .movedToCove = up.status {
-                    Button("Download Cove") { up.openCovePage() }
-                } else if case .available = up.status {
+                if case .available = up.status {
                     Button("Install Update") { Task { await up.install() } }
                 } else {
                     Button("Check for Updates") { Task { await up.check(interactive: true) } }

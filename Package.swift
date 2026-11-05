@@ -1,7 +1,7 @@
 // swift-tools-version:5.9
 import PackageDescription
 let package = Package(
-    name: "EmbyFlix",
+    name: "Cove",
     platforms: [.macOS(.v14)],
-    targets: [.executableTarget(name: "EmbyFlix", path: "Sources", resources: [.copy("Resources/AppIcon.png")])]
+    targets: [.executableTarget(name: "Cove", path: "Sources", resources: [.copy("Resources/AppIcon.png")])]
 )
