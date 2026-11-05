@@ -458,6 +458,9 @@ struct ServerSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Account") {
+            if let user = emby.currentServer?.user, !user.isEmpty {
+                SettingRow(label: "User") { Text(user).foregroundColor(.secondary).textSelection(.enabled) }
+            }
             SettingRow(label: "Signed in to \(emby.currentServerName)") {
                 Button("Sign Out", role: .destructive) { emby.logout() }
             }
