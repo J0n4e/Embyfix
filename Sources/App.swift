@@ -50,6 +50,17 @@ struct CoveApp: App {
                 Button("Check for Updates…") { Task { await Updater.shared.check(interactive: true) } }
             }
         }
+        // Videos play in their own window, like the Apple TV app
+        Window("Player", id: "player") {
+            PlayerWindow()
+                .environmentObject(emby)
+                .environment(\.appBG, Theme.bg(bg))
+                .tint(Theme.accent(accent))
+                .preferredColorScheme(.dark)
+                .frame(minWidth: 640, minHeight: 360)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 760)
     }
 }
 

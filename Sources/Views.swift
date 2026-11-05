@@ -75,21 +75,18 @@ func parseDate(_ s: String?) -> Date? {
 struct RootView: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.appBG) var bg
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     var body: some View {
         ZStack {
-            // Hide (but keep) the screen under the player: AppKit controls such as spinners
-            // otherwise draw on top of the video.
             Group { if emby.loggedIn { HomeView() } else { LoginView() } }
-                .opacity(emby.playing == nil ? 1 : 0)
-                .allowsHitTesting(emby.playing == nil)
             HoverCardLayer()
-            if let req = emby.playing {
-                PlayerView(req: req).id(req.id).zIndex(10)
-            }
         }
+        // The player has its own window (Apple TV style): open it when something starts, close it when it stops
         .onChange(of: emby.playing?.id) { _, id in
             PlaybackFlag.shared.active = id != nil
-            if id != nil { HoverCardCenter.shared.hide() }
+            if id != nil { HoverCardCenter.shared.hide(); openWindow(id: "player") }
+            else { dismissWindow(id: "player") }
         }
     }
 }
@@ -2619,7 +2616,24 @@ struct DetailView: View {
     }
 }
 
-// MARK: - Player (inside the main window)
+// MARK: - Player window
+
+/// Contents of the separate player window. Closing the window (red button) stops playback.
+struct PlayerWindow: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let req = emby.playing { PlayerView(req: req).id(req.id) }
+        }
+        .ignoresSafeArea()
+        .onAppear { if emby.playing == nil { dismiss() } }   // never show an empty player (e.g. restored at launch)
+        .onDisappear { if emby.playing != nil { emby.playing = nil } }
+    }
+}
+
+// MARK: - Player
 
 @MainActor
 final class PlayerModel: ObservableObject {
@@ -3155,10 +3169,10 @@ struct PlayerView: View {
     var window: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
 
     /// Height of the window's title bar while windowed (0 in full screen, where there is none).
-    var titleBarHeight: CGFloat {
-        guard !isFullScreen, let w = window, !w.styleMask.contains(.fullScreen) else { return 0 }
-        return max(0, w.frame.height - w.contentLayoutRect.height)
-    }
+    /// The player has its own window with no title bar, so the video fills it all (the window buttons float on top).
+    var titleBarHeight: CGFloat { 0 }
+    /// Room for the floating window buttons above the top controls (none in full screen).
+    var windowButtonsGap: CGFloat { isFullScreen ? 0 : 22 }
     /// Color of the strip under the title bar. The system draws the bar's own gray (about 93 % opaque) over it,
     /// and the result is the same gray on both sides only when this strip is (44, 45, 45).
     static let titleBarGray = Color(red: 44 / 255, green: 45 / 255, blue: 45 / 255)
@@ -3362,6 +3376,10 @@ struct PlayerView: View {
         }
         .task { await model.start(emby, req) }
         .onDisappear { model.stop() }
+        // Closing the player window (red button or ⌘W) stops playback, like Esc
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
+            if (n.object as? NSWindow)?.title == "Player" { close() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
             if autoNext, !upNextCancelled, let n = nextEp { play(n) } else { close() }
         }
@@ -3438,7 +3456,7 @@ struct PlayerView: View {
             }
             .padding(.horizontal, 18).frame(height: 50).background(.ultraThinMaterial, in: Capsule())
         }
-        .padding(.horizontal, 20).padding(.top, 16)
+        .padding(.horizontal, 20).padding(.top, 16 + windowButtonsGap)
         .environment(\.colorScheme, .dark)
     }
 
