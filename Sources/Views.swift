@@ -2992,6 +2992,8 @@ struct PlayerView: View {
 
     /// The Back pill that used to be drawn inside the player (top left). Off now; see `titleBarBack`.
     static let inPlayerBackPill = false
+    /// The Back pill in the title bar of the windowed player. Off now: Esc leaves the player.
+    static let titleBarBackPill = false
 
     /// Windowed player: Back pill up in the title bar, where the app's own Back pill sits on a page
     /// (right after the window buttons).
@@ -3123,7 +3125,7 @@ struct PlayerView: View {
                     PlayerView.titleBarGray.frame(height: titleBarHeight)
                     Spacer(minLength: 0)
                 }.ignoresSafeArea().allowsHitTesting(false)
-                titleBarBack
+                if Self.titleBarBackPill { titleBarBack }
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -3238,7 +3240,7 @@ struct PlayerView: View {
     var topBar: some View {
         HStack(spacing: 16) {
             // The pill that used to sit here is hidden (kept, not deleted): in full screen Esc does the job, and in a
-            // window the pill now lives in the title bar (titleBarBack). Set inPlayerBackPill to true to bring it back.
+            // window it moved to the title bar (titleBarBack, now off too). Set inPlayerBackPill to true to bring it back.
             if Self.inPlayerBackPill { BackPill { back() }.help(isFullScreen ? "Exit full screen (Esc)" : "Back (Esc)") }
             AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
