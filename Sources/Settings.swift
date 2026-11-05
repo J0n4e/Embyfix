@@ -319,30 +319,6 @@ struct LibrariesSettings: View {
             SettingRow(label: "Alignment") { segmented($labelAlign, [("center", "Centered"), ("left", "Left")]) }
                 .disabled(!showTitle && !showYear)
         }
-        SettingsGroup(title: "Hover preview") {
-            Toggle("Show the preview card when hovering a poster", isOn: $hoverOn)
-            SettingRow(label: "Delay before it opens") {
-                HStack(spacing: 10) {
-                    Slider(value: $hoverDelay, in: 0.1...2.0, step: 0.1).frame(width: 200)
-                    Text(String(format: "%.1f s", hoverDelay)).monospacedDigit().foregroundColor(.secondary)
-                        .frame(width: 46, alignment: .trailing)
-                }
-            }.disabled(!hoverOn)
-            Toggle("Zoom animation (zoom out when it opens, zoom in when it closes)", isOn: $hoverZoom).disabled(!hoverOn)
-            SettingRow(label: "Animation style") {
-                Picker("", selection: $hoverZoomStyle) {
-                    Text("Smooth").tag("smooth")
-                    Text("Spring").tag("spring")
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 260)
-            }.disabled(!hoverOn || !hoverZoom)
-            SettingRow(label: "Zoom duration") {
-                HStack(spacing: 10) {
-                    Slider(value: $hoverZoomDur, in: 0.1...1.0, step: 0.05).frame(width: 200)
-                    Text(String(format: "%.2f s", hoverZoomDur)).monospacedDigit().foregroundColor(.secondary)
-                        .frame(width: 46, alignment: .trailing)
-                }
-            }.disabled(!hoverOn || !hoverZoom)
-        }
         SettingsGroup(title: "Series") {
             SettingRow(label: "Episode layout") { segmented($epLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
             Toggle("Show episode description", isOn: $showEpDesc)

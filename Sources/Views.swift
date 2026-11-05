@@ -1197,7 +1197,6 @@ struct PosterCard: View {
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
     var centered: Bool { labelAlign == "center" }
-    @State private var ptr = PointerBox()    // pointer position on the poster (read lazily, no redraws)
     var body: some View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
@@ -1225,27 +1224,6 @@ struct PosterCard: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .thinBorder(12)
-                // The Netflix-style preview card is drawn by HoverCardLayer (window level), centered on this poster.
-                // Local + global pointer positions together give the poster's place in the window.
-                .onContinuousHover(coordinateSpace: .local) { phase in
-                    if case .active(let p) = phase { ptr.local = p }
-                }
-                .onContinuousHover(coordinateSpace: .global) { phase in
-                    switch phase {
-                    case .active(let p):
-                        ptr.global = p
-                        if !ptr.inside {
-                            ptr.inside = true
-                            let box = ptr
-                            HoverCardCenter.shared.posterHover(item, inside: true) {
-                                CGRect(x: box.global.x - box.local.x, y: box.global.y - box.local.y, width: 170, height: 255)
-                            }
-                        }
-                    case .ended:
-                        ptr.inside = false
-                        HoverCardCenter.shared.posterHover(item, inside: false) { .zero }
-                    }
-                }
                 .modifier(HoverLift(hover: hover))
                 if showTitle || showYear {
                     VStack(alignment: centered ? .center : .leading, spacing: 2) {
