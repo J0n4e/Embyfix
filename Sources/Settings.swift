@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 /// App settings: one window with a sidebar of sections.
 /// Values live in UserDefaults (the same keys the rest of the app reads).
@@ -176,16 +178,63 @@ struct GeneralSettings: View {
 struct AboutSettings: View {
     @EnvironmentObject var emby: Emby
     @State private var confirmReset = false
+    @State private var backupMessage: String?
+
+    /// Saved servers and sign-ins: kept by Reset, and never written to or read from a settings file.
+    static let keep: Set<String> = ["server", "token", "uid", "servers", "did"]
 
     /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
     /// order and window positions). The saved servers and sign-ins are kept.
     func resetAllSettings() {
-        let keep: Set<String> = ["server", "token", "uid", "servers", "did"]
         let d = UserDefaults.standard
-        for key in d.dictionaryRepresentation().keys where !keep.contains(key) {
+        for key in d.dictionaryRepresentation().keys where !Self.keep.contains(key) {
             d.removeObject(forKey: key)
         }
         Task { await emby.loadLibs() }
+    }
+
+    /// The app's own preferences (not the system-wide ones UserDefaults also reports), without servers and sign-ins.
+    var ownSettings: [String: Any] {
+        let domain = Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName
+        return (UserDefaults.standard.persistentDomain(forName: domain) ?? [:]).filter { !Self.keep.contains($0.key) }
+    }
+
+    /// Writes the settings to a property list file the user picks.
+    func saveSettings() {
+        let panel = NSSavePanel()
+        panel.title = "Save Settings"
+        panel.nameFieldStringValue = "Cove Settings.plist"
+        panel.allowedContentTypes = [.propertyList]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try PropertyListSerialization.data(fromPropertyList: ownSettings, format: .xml, options: 0)
+            try data.write(to: url, options: .atomic)
+            backupMessage = "Settings saved to \(url.lastPathComponent)."
+        } catch {
+            backupMessage = "Couldn't save the settings: \(error.localizedDescription)"
+        }
+    }
+
+    /// Replaces the current settings with the ones in a file saved earlier. Servers and sign-ins stay as they are.
+    func loadSettings() {
+        let panel = NSOpenPanel()
+        panel.title = "Load Settings"
+        panel.allowedContentTypes = [.propertyList]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            guard let loaded = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+                backupMessage = "That file doesn't contain settings."; return
+            }
+            let d = UserDefaults.standard
+            for key in ownSettings.keys { d.removeObject(forKey: key) }
+            for (key, value) in loaded where !Self.keep.contains(key) { d.set(value, forKey: key) }
+            Task { await emby.loadLibs() }
+            backupMessage = "Settings loaded. Quit and reopen the app so the window and player pick up every change."
+        } catch {
+            backupMessage = "Couldn't load the settings: \(error.localizedDescription)"
+        }
     }
 
     var body: some View {
@@ -199,6 +248,16 @@ struct AboutSettings: View {
             SettingRow(label: "Source & releases") {
                 Link("github.com/J0n4e/Embyfix", destination: URL(string: "https://github.com/J0n4e/Embyfix/releases")!)
             }
+        }
+        SettingsGroup(title: "Save and load settings",
+                      note: "Saves every setting to a file you choose, and loads them back later or on another Mac. Your servers and sign-in are not included.") {
+            HStack(spacing: 10) {
+                Button("Save settings…") { saveSettings() }
+                Button("Load settings…") { loadSettings() }
+            }
+        }
+        .alert(backupMessage ?? "", isPresented: Binding(get: { backupMessage != nil }, set: { if !$0 { backupMessage = nil } })) {
+            Button("OK", role: .cancel) {}
         }
         SettingsGroup(title: "Reset",
                       note: "Puts every setting back to its default: colors, navigation, layouts, filters, hover preview, subtitles, player and window position. Your servers and sign-in are kept.") {
