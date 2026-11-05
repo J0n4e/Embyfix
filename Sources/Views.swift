@@ -78,16 +78,31 @@ struct RootView: View {
     @Environment(\.appBG) var bg
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @AppStorage("separatePlayer") private var separatePlayer = false
     var body: some View {
+        let inline = !separatePlayer
         ZStack {
+            // Hide (but keep) the screen under an in-window player: AppKit controls such as spinners
+            // otherwise draw on top of the video.
             Group { if emby.loggedIn { HomeView() } else { LoginView() } }
+                .opacity(inline && emby.playing != nil ? 0 : 1)
+                .allowsHitTesting(!(inline && emby.playing != nil))
             HoverCardLayer()
+            if inline, let req = emby.playing {
+                PlayerView(req: req).id(req.id).zIndex(10)
+            }
         }
-        // The player has its own window (Apple TV style): open it when something starts, close it when it stops
+        // Settings → Playback → "Open videos in a separate window" (Apple TV style): open it when something
+        // starts, close it when it stops
         .onChange(of: emby.playing?.id) { _, id in
             PlaybackFlag.shared.active = id != nil
-            if id != nil { HoverCardCenter.shared.hide(); openWindow(id: "player") }
-            else { dismissWindow(id: "player") }
+            if id != nil { HoverCardCenter.shared.hide() }
+            guard separatePlayer else { return }
+            if id != nil { openWindow(id: "player") } else { dismissWindow(id: "player") }
+        }
+        // Switching the setting while a video plays: stop it cleanly (it would otherwise be left without a player)
+        .onChange(of: separatePlayer) { _, _ in
+            if emby.playing != nil { emby.playing = nil; dismissWindow(id: "player") }
         }
     }
 }
@@ -2734,7 +2749,13 @@ struct PlayerWindow: View {
             if let req = emby.playing { PlayerView(req: req).id(req.id) }
         }
         .ignoresSafeArea()
-        .onAppear { if emby.playing == nil { dismiss() } }   // never show an empty player (e.g. restored at launch)
+        .onAppear {
+            if emby.playing == nil || !UserDefaults.standard.bool(forKey: "separatePlayer") { dismiss(); return }
+            // Let the green button and F make the player window full screen
+            DispatchQueue.main.async {
+                NSApp.windows.first { $0.title == "Player" }?.collectionBehavior.insert(.fullScreenPrimary)
+            }
+        }   // never show an empty player (e.g. restored at launch)
         .onDisappear { if emby.playing != nil { emby.playing = nil } }
     }
 }
@@ -3241,6 +3262,7 @@ struct PlayerView: View {
     @State private var sliderW: CGFloat = 1
     @State private var upNextCancelled = false
     @State private var switching = false
+    @State private var escMonitor: Any?
 
     // Subtitle appearance (defaults: normal size, white, drop shadow, transparent, 10% from bottom)
     @AppStorage("subTextSize") private var subTextSize = "normal"
@@ -3276,9 +3298,13 @@ struct PlayerView: View {
 
     /// Height of the window's title bar while windowed (0 in full screen, where there is none).
     /// The player has its own window with no title bar, so the video fills it all (the window buttons float on top).
-    var titleBarHeight: CGFloat { 0 }
-    /// Room for the floating window buttons above the top controls (none in full screen).
-    var windowButtonsGap: CGFloat { isFullScreen ? 0 : 22 }
+    var titleBarHeight: CGFloat {
+        guard !separate, !isFullScreen, let w = window, !w.styleMask.contains(.fullScreen) else { return 0 }
+        return max(0, w.frame.height - w.contentLayoutRect.height)
+    }
+    var separate: Bool { UserDefaults.standard.bool(forKey: "separatePlayer") }
+    /// Room for the floating window buttons above the top controls (separate window only, none in full screen).
+    var windowButtonsGap: CGFloat { separate && !isFullScreen ? 22 : 0 }
     /// Color of the strip under the title bar. The system draws the bar's own gray (about 93 % opaque) over it,
     /// and the result is the same gray on both sides only when this strip is (44, 45, 45).
     static let titleBarGray = Color(red: 44 / 255, green: 45 / 255, blue: 45 / 255)
@@ -3311,6 +3337,7 @@ struct PlayerView: View {
     /// Full screen for the video; leaving the player restores the window if the player made it full screen.
     func toggleFullScreen() {
         guard let w = window else { return }
+        w.collectionBehavior.insert(.fullScreenPrimary)   // the separate player window isn't full-screen capable by default
         let on = w.styleMask.contains(.fullScreen)
         if !on { enteredFullScreen = true }
         w.toggleFullScreen(nil)
@@ -3465,15 +3492,31 @@ struct PlayerView: View {
             }
         }
         .toolbar(.hidden, for: .windowToolbar)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in isFullScreen = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in isFullScreen = false }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            isFullScreen = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { n in
+            isFullScreen = false
+            // Take the keyboard back after leaving full screen, so Esc / Space / F keep working
+            (n.object as? NSWindow)?.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
+        }
         .onKeyPress(.leftArrow) { model.skip(-Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
-        .onKeyPress(.escape) {
-            // Esc: close a panel, else leave full screen (video keeps playing), else close the player
-            if panel != nil { panel = nil } else if isFullScreen { toggleFullScreen() } else { close() }
-            return .handled
+        // Esc: close a panel, else leave full screen (video keeps playing), else close the player.
+        // Caught at the app level: AppKit sometimes swallows Esc before SwiftUI's key handlers see it
+        // (after full screen, and in the separate player window).
+        .onAppear {
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+                guard ev.keyCode == 53, NSApp.keyWindow?.attachedSheet == nil,
+                      NSApp.keyWindow?.sheetParent == nil else { return ev }
+                let full = NSApp.keyWindow?.styleMask.contains(.fullScreen) ?? false
+                if panel != nil { panel = nil } else if full { toggleFullScreen() } else { close() }
+                return nil
+            }
         }
+        .onDisappear { if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil } }
         .task {
             focused = true
             isFullScreen = window?.styleMask.contains(.fullScreen) ?? false

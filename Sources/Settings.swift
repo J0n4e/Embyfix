@@ -567,6 +567,7 @@ struct PlaybackSettings: View {
     @AppStorage("autoSkipIntro") private var autoSkipIntro = true
     @AppStorage("skipSeconds") private var skip = 10
     @AppStorage("clickToPause") private var clickToPause = true
+    @AppStorage("separatePlayer") private var separatePlayer = false
 
     var body: some View {
         PrefSection {
@@ -583,6 +584,7 @@ struct PlaybackSettings: View {
         PrefSection(last: true) {
             PrefRow(label: "When playing") {
                 VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Open videos in a separate window", isOn: $separatePlayer)
                     Toggle("Play the next episode automatically", isOn: $autoNext)
                     Toggle("Skip intros automatically", isOn: $autoSkipIntro)
                     Toggle("Click the video to play or pause", isOn: $clickToPause)
