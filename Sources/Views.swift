@@ -371,8 +371,8 @@ struct HomeView: View {
     /// Top bar layout: a navigation row under the title bar (see TopNavBar), with the page area below it.
     var topLayout: some View {
         VStack(spacing: 0) {
-            TopNavBar()
-            detailPane(withSearch: false)
+            TopNavBar().zIndex(1)   // in front of the page, so nothing on a page can cover its buttons
+            detailPane(withSearch: false).clipped()
         }.background(bg)
     }
 
@@ -460,7 +460,9 @@ struct TopNavButtons: View {
                 .padding(.horizontal, 18).padding(.vertical, 6)
                 .background(Capsule().fill(on ? Color.white.opacity(0.28) : Color.clear))
                 .contentShape(Capsule())
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()   // no blue keyboard-focus ring around a section
     }
     var body: some View {
         HStack(spacing: 4) {
@@ -961,7 +963,8 @@ struct Hero: View {
     var body: some View {
         let item = items[index % items.count]
         ZStack(alignment: .bottomLeading) {
-            Backdrop(id: item.backdropId ?? item.Id).frame(height: 440).frame(maxWidth: .infinity).clipped()
+            Color.clear.frame(maxWidth: .infinity).frame(height: 440)
+                .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
                 .id("b" + item.id).transition(.opacity)
             VStack(alignment: .leading, spacing: 14) {
                 Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2).blackOutline(2)
@@ -1954,7 +1957,11 @@ struct DetailView: View {
         }
         .background(alignment: .top) {
             ZStack {
-                Backdrop(id: item.backdropId ?? item.Id).frame(height: 520).clipped().opacity(0.35)
+                // Fill the page width without growing it: a filled image sized by its own width made the whole
+                // page wider than the window (pushing the Top bar's Search and Settings off screen)
+                Color.clear.frame(height: 520)
+                    .overlay { Backdrop(id: item.backdropId ?? item.Id) }
+                    .clipped().opacity(0.35)
                 LinearGradient(colors: [Color.clear, bg], startPoint: .top, endPoint: .bottom)
             }.frame(height: 520)
         }
