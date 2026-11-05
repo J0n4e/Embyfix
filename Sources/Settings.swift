@@ -311,7 +311,7 @@ struct LibrariesSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Default view for new libraries") {
-            SettingRow(label: "Layout") { segmented($defaultLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
+            SettingRow(label: "Layout") { segmented($defaultLayout, [("grid", "Grid"), ("list", "List")]) }
         }
         SettingsGroup(title: "Poster labels") {
             Toggle("Show title under posters", isOn: $showTitle)
@@ -374,7 +374,7 @@ struct LibrariesSettings: View {
                     .disabled(i == emby.libs.count - 1).buttonStyle(.borderless)
             }
             FlowLayout(hSpacing: 18, vSpacing: 8) {
-                labeled("View") { segmented(bind(lib, "layout", defaultLayout), [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
+                labeled("View") { segmented(bind(lib, "layout", defaultLayout), [("grid", "Grid"), ("list", "List")]) }
                 labeled("Sort") {
                     menuPicker(bind(lib, "sort", "name"),
                                [("name", "Name"), ("latest", "Recently Added"), ("release", "Release Date"), ("top", "Rating")])

@@ -41,6 +41,11 @@ struct CoveApp: App {
                 .task { await Updater.shared.checkOnLaunch() }
         }
         .commands {
+            // Cove → Settings… (⌘,), as in the Apple TV app
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { NavState.shared.showSettings = true }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await Updater.shared.check(interactive: true) } }
             }

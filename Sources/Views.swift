@@ -336,16 +336,6 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
             }
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 12) {
-                    Button { nav.showSettings = true } label: {
-                        Label("Settings", systemImage: "gearshape").font(.callout)
-                            .padding(.horizontal, 8).padding(.vertical, 8).contentShape(Rectangle())
-                    }
-                    .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
-                    Spacer()
-                }.buttonStyle(.plain).padding(10)
-            }
             // Sidebar in the chosen background color instead of the system gray. The color stops below the
             // title bar, so the strip behind the window buttons keeps the same gray as the rest of the title bar.
             .scrollContentBackground(.hidden)
