@@ -429,13 +429,16 @@ struct TopNavBar: View {
     @Environment(\.appBG) var bg
     let back: (() -> Void)?
     var body: some View {
+        // The two sides share the leftover width equally, so the pill stays in the middle of the window, and the
+        // fixed height keeps the bar from growing: nothing moves when Back appears or disappears.
         HStack(spacing: 16) {
-            if let back { TopBackButton(action: back) }
-            Spacer(minLength: 0)
-            TopNavButtons()
-            Spacer(minLength: 0)
+            HStack { if let back { TopBackButton(action: back) } }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            TopNavButtons().layoutPriority(1)
             TopNavTools().fixedSize()
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .frame(height: 36)
         .padding(.horizontal, 28).padding(.vertical, 12)
         .background(bg)
     }
