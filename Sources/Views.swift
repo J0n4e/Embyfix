@@ -1,5 +1,6 @@
 import IOKit.pwr_mgt
 import SwiftUI
+import MediaPlayer
 import AVKit
 
 // MARK: - Theme
@@ -291,6 +292,7 @@ struct HomeView: View {
                     .badge(activeCount)
                     .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
                 Section("Library") {
+                    sideLabel("Recently Added", "clock").modifier(RootTap(id: "recent", sel: sel, action: popToRoot)).tag("recent")
                     ForEach(emby.libs.filter { $0.visible }) { lib in
                         sideLabel(lib.title, icon(lib)).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
                     }
@@ -340,11 +342,13 @@ struct HomeView: View {
                     else if sel == "home" { HomeContent(reloadToken: reloadToken) }
                     else if sel == "favorites" { FavoritesView() }
                     else if sel == "nowplaying" { NowPlayingView() }
+                    else if sel == "recent" { FeedView(feed: .recent, root: true) }
                     else if let lib = emby.libs.first(where: { $0.id == sel }) { LibraryView(lib: lib).id(lib.id) }
                     else { Color.black }
                 }
                 .navigationDestination(for: Item.self) { DetailView(item: $0) }
                 .navigationDestination(for: PersonRef.self) { PersonView(person: $0) }
+                .navigationDestination(for: Feed.self) { FeedView(feed: $0) }
             }
             // Back button in the title bar, left of the window title, on every page
             .toolbar { TitleBarItems(back: nil) }   // top-level pages: no Back (pushed pages add their own)
@@ -461,6 +465,7 @@ struct TopNavButtons: View {
             item("Home", "home")
             item("Favorites", "favorites")
             item("Now Playing", "nowplaying", badge: nav.activeCount)
+            item("Recently Added", "recent")
             ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
         }
         .padding(4)
@@ -893,6 +898,22 @@ struct PersonView: View {
 
 struct HomeContent: View {
     @EnvironmentObject var emby: Emby
+    @ObservedObject private var nav = NavState.shared
+
+    /// "Title ›" like Apple TV: opens the full list (feed page) or the library.
+    @ViewBuilder func rowTitle(_ row: Row) -> some View {
+        let label = HStack(spacing: 6) {
+            Text(row.title).font(.system(size: 22, weight: .bold))
+            Image(systemName: "chevron.right").font(.system(size: 17, weight: .bold)).foregroundColor(.secondary)
+        }.contentShape(Rectangle())
+        if let f = row.feed {
+            NavigationLink(value: f) { label }.buttonStyle(.plain).help("Show all")
+        } else if let id = row.libId {
+            Button { nav.sel = id } label: { label }.buttonStyle(.plain).help("Open \(row.title)")
+        } else {
+            Text(row.title).font(.system(size: 22, weight: .bold))
+        }
+    }
     @Environment(\.appBG) var bg
     let reloadToken: Int
     @State private var rows: [Row] = []
@@ -916,8 +937,8 @@ struct HomeContent: View {
                 if !hero.isEmpty { Hero(items: hero) }
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(row.title).font(.system(size: 22, weight: .bold)).padding(.leading, 52)
-                        if row.title == "Continue Watching" {
+                        rowTitle(row).padding(.leading, 52)
+                        if row.feed == .resume || row.feed == .nextUp {
                             ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 340, spacing: 22, inset: 52) {
                                 ResumeCard(item: row.items[$0])
                             }
@@ -1160,6 +1181,43 @@ struct ResumeCard: View {
         .onHover { hover = $0 }
         .onTapGesture { openPage() }
         .help(item.isEpisode ? "\(item.heroTitle) — \(item.Name)" : item.Name)
+    }
+}
+
+/// Full page for Continue Watching, Up Next or Recently Added.
+struct FeedView: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
+    @Environment(\.dismiss) var dismiss
+    let feed: Feed
+    var root = false
+    @State private var items: [Item] = []
+    @State private var loading = true
+    var landscape: Bool { feed != .recent }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(feed.rawValue).font(.system(size: 30, weight: .bold))
+                if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
+                else if items.isEmpty { Text("Nothing here yet.").foregroundColor(.secondary) }
+                if landscape {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 22)], alignment: .leading, spacing: 22) {
+                        ForEach(items) { ResumeCard(item: $0) }
+                    }
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], alignment: .leading, spacing: 22) {
+                        ForEach(items) { PosterCard(item: $0) }
+                    }
+                }
+            }
+            .padding(.horizontal, 52).padding(.vertical, 24)
+        }
+        .background(bg)
+        .task { items = await emby.feed(feed); loading = false }
+        .navigationBarBackButtonHidden(true)
+        .toolbar { TitleBarItems(back: root ? nil : { dismiss() }) }
+        .hideToolbarTitle()
     }
 }
 
@@ -2616,6 +2674,54 @@ struct DetailView: View {
     }
 }
 
+// MARK: - Media keys and Control Center
+
+/// Play/pause and skip from the keyboard's media keys, AirPods and Control Center, with the title and
+/// progress shown in the Mac's Now Playing widget.
+@MainActor
+enum RemoteControls {
+    static func attach(_ m: PlayerModel, skip: Double) {
+        let c = MPRemoteCommandCenter.shared()
+        detach()
+        c.togglePlayPauseCommand.addTarget { _ in m.togglePlay(); return .success }
+        c.playCommand.addTarget { _ in if !m.playing { m.togglePlay() }; return .success }
+        c.pauseCommand.addTarget { _ in if m.playing { m.togglePlay() }; return .success }
+        c.skipForwardCommand.preferredIntervals = [NSNumber(value: skip)]
+        c.skipBackwardCommand.preferredIntervals = [NSNumber(value: skip)]
+        c.skipForwardCommand.addTarget { _ in m.skip(skip); return .success }
+        c.skipBackwardCommand.addTarget { _ in m.skip(-skip); return .success }
+        c.changePlaybackPositionCommand.addTarget { e in
+            guard let e = e as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            m.seek(to: e.positionTime); return .success
+        }
+    }
+
+    static func detach() {
+        let c = MPRemoteCommandCenter.shared()
+        for cmd in [c.togglePlayPauseCommand, c.playCommand, c.pauseCommand, c.skipForwardCommand,
+                    c.skipBackwardCommand, c.changePlaybackPositionCommand] as [MPRemoteCommand] {
+            cmd.removeTarget(nil)
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+
+    static func update(_ item: Item, _ m: PlayerModel) {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: item.isEpisode ? item.Name : item.heroTitle,
+            MPMediaItemPropertyPlaybackDuration: m.duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: m.time,
+            MPNowPlayingInfoPropertyPlaybackRate: m.playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+        ]
+        if item.isEpisode {
+            info[MPMediaItemPropertyArtist] = "\(item.heroTitle) · S\(item.ParentIndexNumber ?? 0), E\(item.IndexNumber ?? 0)"
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        MPNowPlayingInfoCenter.default().playbackState = m.playing ? .playing : .paused
+    }
+}
+
 // MARK: - Player window
 
 /// Contents of the separate player window. Closing the window (red button) stops playback.
@@ -3375,7 +3481,12 @@ struct PlayerView: View {
             if item.isEpisode, let sid = item.SeriesId { episodes = await emby.episodes(sid) }
         }
         .task { await model.start(emby, req) }
-        .onDisappear { model.stop() }
+        .onDisappear { model.stop(); if emby.playing == nil { RemoteControls.detach() } }   // keep keys when switching episodes
+        // Media keys / Control Center
+        .onAppear { RemoteControls.attach(model, skip: Double(skipSecs)) }
+        .onChange(of: model.playing) { RemoteControls.update(item, model) }
+        .onChange(of: model.duration) { RemoteControls.update(item, model) }
+        .onChange(of: Int(model.time / 10)) { RemoteControls.update(item, model) }
         // Closing the player window (red button or ⌘W) stops playback, like Esc
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
             if (n.object as? NSWindow)?.title == "Player" { close() }

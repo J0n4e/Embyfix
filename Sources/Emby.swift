@@ -157,7 +157,15 @@ struct Full: Decodable {
     struct UD: Decodable { let LastPlayedDate: String? }
 }
 
-struct Row: Identifiable { let id = UUID(); let title: String; let items: [Item] }
+struct Row: Identifiable {
+    let id = UUID(); let title: String; let items: [Item]
+    /// What the row's "›" title opens: a feed page or a library.
+    var feed: Feed? = nil
+    var libId: String? = nil
+}
+
+/// Full-page lists behind the home rows and the sidebar's Recently Added.
+enum Feed: String, Hashable { case resume = "Continue Watching", nextUp = "Up Next", recent = "Recently Added" }
 
 struct LibPref: Identifiable, Codable, Hashable {
     var id: String
@@ -436,12 +444,35 @@ final class Emby: ObservableObject {
         var rows: [Row] = []
         if let r: ItemList = try? await get("/Users/\(userId)/Items/Resume",
             ["Fields": "Overview,Genres", "Limit": "20", "MediaTypes": "Video", "Recursive": "true"]),
-           !r.Items.isEmpty { rows.append(Row(title: "Continue Watching", items: r.Items)) }
+           !r.Items.isEmpty { rows.append(Row(title: "Continue Watching", items: r.Items, feed: .resume)) }
+        // Up Next (Apple TV): the next episode of each show you're watching, minus ones already in Continue Watching
+        let started = Set(rows.first?.items.map { $0.id } ?? [])
+        let up = await feed(.nextUp, limit: 20).filter { !started.contains($0.id) }
+        if !up.isEmpty { rows.append(Row(title: "Up Next", items: up, feed: .nextUp)) }
         for lib in libs where lib.visible && lib.onHome {
             let items = await libraryItems(lib, limit: 20).Items
-            if !items.isEmpty { rows.append(Row(title: lib.title, items: items)) }
+            if !items.isEmpty { rows.append(Row(title: lib.title, items: items, libId: lib.id)) }
         }
         return rows
+    }
+
+    /// Items for a feed page (Continue Watching, Up Next, Recently Added).
+    func feed(_ f: Feed, limit: Int = 100) async -> [Item] {
+        let fields = "Overview,Genres"
+        switch f {
+        case .resume:
+            let r: ItemList? = try? await get("/Users/\(userId)/Items/Resume",
+                ["Fields": fields, "Limit": "\(limit)", "MediaTypes": "Video", "Recursive": "true"])
+            return r?.Items ?? []
+        case .nextUp:
+            let r: ItemList? = try? await get("/Shows/NextUp", ["UserId": userId, "Fields": fields, "Limit": "\(limit)", "Legacynextup": "true"])
+            return r?.Items ?? []
+        case .recent:
+            let r: ItemList? = try? await get("/Users/\(userId)/Items",
+                ["SortBy": "DateCreated", "SortOrder": "Descending", "IncludeItemTypes": "Movie,Series",
+                 "Recursive": "true", "Fields": fields, "Limit": "\(limit)"])
+            return r?.Items ?? []
+        }
     }
 
     func episodes(_ seriesId: String) async -> [Item] {
