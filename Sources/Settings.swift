@@ -296,7 +296,7 @@ struct LibrariesSettings: View {
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
     @AppStorage("showEpisodeDescription") private var showEpDesc = true
-    @AppStorage("episodeLayout") private var epLayout = "list"
+    @AppStorage("episodeLayoutTV") private var epLayout = "row"
     @AppStorage("hoverPreviewEnabled") private var hoverOn = true
     @AppStorage("hoverPreviewDelay") private var hoverDelay = 0.7
     @AppStorage("hoverZoomEnabled") private var hoverZoom = true
@@ -311,7 +311,7 @@ struct LibrariesSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Default view for new libraries") {
-            SettingRow(label: "Layout") { segmented($defaultLayout, [("grid", "Grid"), ("list", "List")]) }
+            SettingRow(label: "Layout") { segmented($defaultLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
         }
         SettingsGroup(title: "Poster labels") {
             Toggle("Show title under posters", isOn: $showTitle)
@@ -344,7 +344,7 @@ struct LibrariesSettings: View {
             }.disabled(!hoverOn || !hoverZoom)
         }
         SettingsGroup(title: "Series") {
-            SettingRow(label: "Episode layout") { segmented($epLayout, [("grid", "Grid"), ("list", "List")]) }
+            SettingRow(label: "Episode layout") { segmented($epLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
             Toggle("Show episode description", isOn: $showEpDesc)
         }
         SettingsGroup(title: "Libraries",
@@ -374,7 +374,7 @@ struct LibrariesSettings: View {
                     .disabled(i == emby.libs.count - 1).buttonStyle(.borderless)
             }
             FlowLayout(hSpacing: 18, vSpacing: 8) {
-                labeled("View") { segmented(bind(lib, "layout", defaultLayout), [("grid", "Grid"), ("list", "List")]) }
+                labeled("View") { segmented(bind(lib, "layout", defaultLayout), [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
                 labeled("Sort") {
                     menuPicker(bind(lib, "sort", "name"),
                                [("name", "Name"), ("latest", "Recently Added"), ("release", "Release Date"), ("top", "Rating")])
@@ -399,7 +399,7 @@ struct LibrariesSettings: View {
 // MARK: - Series & episodes
 
 struct SeriesSettings: View {
-    @AppStorage("episodeLayout") private var epLayout = "list"
+    @AppStorage("episodeLayoutTV") private var epLayout = "row"
     @AppStorage("episodeSubLang") private var epSubLang = ""
 
     static let languages = ["English", "Romanian", "Spanish", "French", "German", "Italian", "Portuguese",
@@ -419,7 +419,7 @@ struct SeriesSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Episodes") {
-            SettingRow(label: "Episode layout") { segmented($epLayout, [("grid", "Grid"), ("list", "List")]) }
+            SettingRow(label: "Episode layout") { segmented($epLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
             SettingRow(label: "Subtitle language") { menuPicker($epSubLang, langOptions) }
         }
         Text("The subtitle language is used for every episode you play from a series page; it's the same setting as the Subtitles menu next to the episode list.")
