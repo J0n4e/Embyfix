@@ -303,23 +303,6 @@ struct HomeView: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 290)
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading, spacing: 14) {
-                    Button { emby.switchServer() } label: {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(emby.currentServerName).font(.callout.weight(.semibold)).lineLimit(1)
-                                Text(emby.currentServer?.user.isEmpty == false ? emby.currentServer!.user : (URL(string: emby.server)?.host ?? ""))
-                                    .font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        .background(Color.white.opacity(0.05))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 1))
-                        .cornerRadius(8).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Connected to \(emby.server) — click to switch server")
                     // Search sits in the sidebar, as in the Apple TV app
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass").foregroundColor(.secondary)

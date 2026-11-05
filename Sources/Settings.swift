@@ -79,23 +79,56 @@ struct SettingsView: View {
 
 // MARK: - Building blocks
 
-/// A section like macOS / Apple TV settings: a right-aligned "Title:" label, the controls beside it,
-/// and a thin line under it.
+/// Width of the right-aligned label column, shared by every row so all controls line up.
+let prefLabelW: CGFloat = 190
+
+/// A group of rows with a thin line under it (macOS / Apple TV settings style).
+struct PrefSection<C: View>: View {
+    var last = false
+    @ViewBuilder var content: C
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { content }
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .bottom) { if !last { Divider() } }
+    }
+}
+
+/// "Label:" right-aligned in the label column, the control beside it.
+struct PrefRow<C: View>: View {
+    var label: String = ""
+    @ViewBuilder var control: C
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(label.isEmpty ? "" : label + ":").frame(width: prefLabelW, alignment: .trailing)
+                .padding(.top, 4)
+            control
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Grey help text lined up under the controls.
+struct PrefNote: View {
+    let text: String
+    init(_ t: String) { text = t }
+    var body: some View {
+        Text(text).font(.callout).foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 440, alignment: .leading)
+            .padding(.leading, prefLabelW + 10)
+    }
+}
+
+// Old building blocks, still used by a few rows
 struct SettingsGroup<C: View>: View {
     let title: String
     var note: String? = nil
     @ViewBuilder var content: C
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(title + ":").frame(width: 170, alignment: .trailing)
-                VStack(alignment: .leading, spacing: 10) {
-                    content
-                    if let note { Text(note).font(.callout).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true) }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.vertical, 16)
-            Divider()
+        PrefSection {
+            PrefRow(label: title) { VStack(alignment: .leading, spacing: 10) { content } }
+            if let note { PrefNote(note) }
         }
     }
 }
@@ -104,11 +137,7 @@ struct SettingRow<C: View>: View {
     let label: String
     @ViewBuilder var control: C
     var body: some View {
-        HStack(spacing: 10) {
-            Text(label).foregroundColor(.secondary)
-            control
-            Spacer(minLength: 0)
-        }
+        HStack(spacing: 10) { Text(label).foregroundColor(.secondary); control; Spacer(minLength: 0) }
     }
 }
 
@@ -164,19 +193,20 @@ struct GeneralSettings: View {
     }
 
     var body: some View {
-        SettingsGroup(title: "Appearance") {
-            Text("Accent color").foregroundColor(.secondary)
-            swatches(Theme.accents, selection: $accent)
-            Text("Background").foregroundColor(.secondary).padding(.top, 4)
-            bgTiles(selection: $bg)
-            SettingRow(label: "Navigation") {
+        PrefSection {
+            PrefRow(label: "Accent color") { swatches(Theme.accents, selection: $accent) }
+        }
+        PrefSection {
+            PrefRow(label: "Background") { bgTiles(selection: $bg) }
+        }
+        PrefSection(last: true) {
+            PrefRow(label: "Navigation") {
                 Picker("", selection: $navStyle) {
                     Text("Sidebar").tag("sidebar")
                     Text("Top bar").tag("topbar")
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
-            }.padding(.top, 4)
-            Text("Top bar replaces the sidebar with a bar across the top (Home, Favorites, libraries and search). Settings are in the Cove menu (⌘,).")
-                .font(.caption).foregroundColor(.secondary)
+                }.pickerStyle(.radioGroup).labelsHidden()
+            }
+            PrefNote("Top bar replaces the sidebar with a bar across the top. Settings are in the Cove menu (⌘,).")
         }
     }
 }
@@ -247,30 +277,28 @@ struct AboutSettings: View {
     }
 
     var body: some View {
-        SettingsGroup(title: "About") {
-            SettingRow(label: "App") { Text("Cove").foregroundColor(.secondary) }
-            SettingRow(label: "Version") {
-                Text(AppVersion.label)
-                    .foregroundColor(.secondary).textSelection(.enabled)
-            }
-            SettingRow(label: "Updates") { UpdateRow() }
-            SettingRow(label: "Source & releases") {
+        PrefSection {
+            PrefRow(label: "Version") { Text("Cove " + AppVersion.label).textSelection(.enabled) }
+            PrefRow(label: "Updates") { UpdateRow() }
+            PrefRow(label: "Source") {
                 Link("github.com/J0n4e/Embyfix", destination: URL(string: "https://github.com/J0n4e/Embyfix/releases")!)
             }
         }
-        SettingsGroup(title: "Save and load settings",
-                      note: "Saves every setting to a file you choose, and loads them back later or on another Mac. Your servers and sign-in are not included.") {
-            HStack(spacing: 10) {
-                Button("Save settings…") { saveSettings() }
-                Button("Load settings…") { loadSettings() }
+        PrefSection {
+            PrefRow(label: "Settings file") {
+                HStack(spacing: 10) {
+                    Button("Save…") { saveSettings() }
+                    Button("Load…") { loadSettings() }
+                }
             }
+            PrefNote("Saves every setting to a file, to load later or on another Mac. Servers and sign-ins are not included.")
         }
         .alert(backupMessage ?? "", isPresented: Binding(get: { backupMessage != nil }, set: { if !$0 { backupMessage = nil } })) {
             Button("OK", role: .cancel) {}
         }
-        SettingsGroup(title: "Reset",
-                      note: "Puts every setting back to its default: colors, navigation, layouts, filters, hover preview, subtitles, player and window position. Your servers and sign-in are kept.") {
-            Button("Reset all settings to default…", role: .destructive) { confirmReset = true }
+        PrefSection(last: true) {
+            PrefRow(label: "Reset") { Button("Reset All Settings…", role: .destructive) { confirmReset = true } }
+            PrefNote("Puts every setting back to its default. Your servers and sign-in are kept.")
         }
         .alert("Reset all settings?", isPresented: $confirmReset) {
             Button("Reset", role: .destructive) { resetAllSettings() }
@@ -319,39 +347,54 @@ struct LibrariesSettings: View {
     }
 
     var body: some View {
-        SettingsGroup(title: "New libraries") {
-            SettingRow(label: "Layout") { segmented($defaultLayout, [("grid", "Grid"), ("list", "List")]) }
-        }
-        SettingsGroup(title: "Poster labels") {
-            Toggle("Show title under posters", isOn: $showTitle)
-            Toggle("Show year under posters", isOn: $showYear)
-            SettingRow(label: "Alignment") { segmented($labelAlign, [("center", "Centered"), ("left", "Left")]) }
+        PrefSection {
+            PrefRow(label: "Poster labels") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Title", isOn: $showTitle)
+                    Toggle("Year", isOn: $showYear)
+                }
+            }
+            PrefRow(label: "Label alignment") { segmented($labelAlign, [("center", "Centered"), ("left", "Left")]) }
                 .disabled(!showTitle && !showYear)
         }
-        SettingsGroup(title: "Series") {
-            SettingRow(label: "Episode layout") { segmented($epLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
-            Toggle("Show episode description", isOn: $showEpDesc)
+        PrefSection {
+            PrefRow(label: "Episode layout") { segmented($epLayout, [("row", "Row"), ("grid", "Grid"), ("list", "List")]) }
+            PrefRow { Toggle("Show episode descriptions", isOn: $showEpDesc) }
         }
-        SettingsGroup(title: "Libraries",
-                      note: "Show puts a library in the sidebar; Home row adds it to the home screen. Use the arrows to reorder.") {
-            if emby.libs.isEmpty { Text("No libraries loaded yet.").foregroundColor(.secondary) }
-            ForEach(Array(emby.libs.enumerated()), id: \.element.id) { i, lib in
-                libraryCard(i, lib)
-                if i < emby.libs.count - 1 { Divider() }
+        PrefSection {
+            PrefRow(label: "New libraries") {
+                HStack(spacing: 10) {
+                    segmented($defaultLayout, [("grid", "Grid"), ("list", "List")])
+                    Button("Apply to All") {
+                        for lib in emby.libs { LibraryDefaults(id: lib.id).set("layout", defaultLayout) }
+                        tick += 1
+                    }
+                }
             }
         }
-        Button("Apply grid/list default to all libraries") {
-            for lib in emby.libs { LibraryDefaults(id: lib.id).set("layout", defaultLayout) }
-            tick += 1
+        PrefSection(last: true) {
+            PrefRow(label: "Libraries") {
+                VStack(alignment: .leading, spacing: 0) {
+                    if emby.libs.isEmpty { Text("No libraries loaded yet.").foregroundColor(.secondary) }
+                    ForEach(Array(emby.libs.enumerated()), id: \.element.id) { i, lib in
+                        libraryCard(i, lib)
+                            .padding(12)
+                            .background(i % 2 == 0 ? Color.white.opacity(0.04) : Color.clear)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1)))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            PrefNote("Show puts a library in the sidebar; Home adds a row for it on the home screen. Use the arrows to reorder.")
         }
     }
 
     func libraryCard(_ i: Int, _ lib: LibPref) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                TextField(lib.name, text: $emby.libs[i].title).textFieldStyle(.roundedBorder).frame(width: 200)
+                TextField(lib.name, text: $emby.libs[i].title).textFieldStyle(.roundedBorder).frame(width: 170)
                 Toggle("Show", isOn: $emby.libs[i].visible)
-                Toggle("Home row", isOn: $emby.libs[i].onHome).disabled(!lib.visible)
+                Toggle("Home", isOn: $emby.libs[i].onHome).disabled(!lib.visible)
                 Spacer()
                 Button { emby.libs.swapAt(i, i - 1) } label: { Image(systemName: "arrow.up") }
                     .disabled(i == 0).buttonStyle(.borderless)
@@ -424,25 +467,29 @@ struct SubtitleSettings: View {
     @AppStorage("subLang") private var subLang = "english"
 
     var body: some View {
-        SettingsGroup(title: "Subtitle language",
-                      note: "When on, every movie and episode starts with subtitles in this language if it has them (text subtitles such as SRT are preferred). Choosing Off for a movie, or in the player, still turns them off.") {
-            Toggle("Always load preferred subtitle language", isOn: $subAlways)
-            SettingRow(label: "Preferred language") {
+        PrefSection {
+            PrefRow { Toggle("Always load my subtitle language", isOn: $subAlways) }
+            PrefRow(label: "Language") {
                 menuPicker($subLang, SeriesSettings.languages.map { ($0.lowercased(), $0) })
             }.disabled(!subAlways)
+            PrefNote("Movies and episodes start with subtitles in this language when they have them. You can still turn them off in the player.")
         }
-        SettingsGroup(title: "Subtitle appearance") {
-            SettingRow(label: "Text size") { menuPicker($subTextSize, PlayerView.sizes.map { ($0.0, $0.1) }) }
-            SettingRow(label: "Text color") { menuPicker($subColor, PlayerView.colors.map { ($0.0, $0.1) }) }
-            SettingRow(label: "Drop shadow") { menuPicker($subShadow, PlayerView.shadows) }
-            SettingRow(label: "Background") { menuPicker($subBg, PlayerView.bgs.map { ($0.0, $0.1) }) }
-            SettingRow(label: "Bottom edge position") {
+        PrefSection {
+            PrefRow(label: "Text size") { menuPicker($subTextSize, PlayerView.sizes.map { ($0.0, $0.1) }) }
+            PrefRow(label: "Text color") { menuPicker($subColor, PlayerView.colors.map { ($0.0, $0.1) }) }
+            PrefRow(label: "Shadow") { menuPicker($subShadow, PlayerView.shadows) }
+            PrefRow(label: "Background") { menuPicker($subBg, PlayerView.bgs.map { ($0.0, $0.1) }) }
+            PrefRow(label: "Distance from bottom") {
                 menuPicker($subBottom, [0, 5, 10, 15, 20, 25, 30].map { (Double($0), "\($0)%") })
             }
+            PrefRow {
+                Button("Restore Defaults") {
+                    subTextSize = "normal"; subColor = "white"; subShadow = "drop"; subBg = "none"; subBottom = 10
+                }
+            }
         }
-        preview
-        Button("Reset to Default") {
-            subTextSize = "normal"; subColor = "white"; subShadow = "drop"; subBg = "none"; subBottom = 10
+        PrefSection(last: true) {
+            PrefRow(label: "Preview") { preview.frame(width: 420) }
         }
     }
 
@@ -477,20 +524,26 @@ struct PlaybackSettings: View {
     @AppStorage("clickToPause") private var clickToPause = true
 
     var body: some View {
-        SettingsGroup(title: "Playback") {
-            SettingRow(label: "Default quality") {
+        PrefSection {
+            PrefRow(label: "Quality") {
                 menuPicker($quality, [(0, "Original"), (8_000_000, "1080p · 8 Mbps"), (4_000_000, "720p · 4 Mbps"), (1_500_000, "480p · 1.5 Mbps")])
             }
-            SettingRow(label: "Default speed") {
+            PrefRow(label: "Speed") {
                 menuPicker($speed, [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0].map { ($0, $0 == 1 ? "Normal" : String(format: "%gx", $0)) })
             }
-            SettingRow(label: "Skip back / forward") {
+            PrefRow(label: "Skip back / forward") {
                 segmented($skip, [(5, "5 s"), (10, "10 s"), (15, "15 s"), (30, "30 s")])
             }
-            Toggle("Play next episode automatically", isOn: $autoNext)
-            Toggle("Skip intros automatically", isOn: $autoSkipIntro)
-            Toggle("Click on the video to play / pause", isOn: $clickToPause)
-            Text("When off, clicking the video shows or hides the controls.").font(.caption).foregroundColor(.secondary)
+        }
+        PrefSection(last: true) {
+            PrefRow(label: "When playing") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Play the next episode automatically", isOn: $autoNext)
+                    Toggle("Skip intros automatically", isOn: $autoSkipIntro)
+                    Toggle("Click the video to play or pause", isOn: $clickToPause)
+                }
+            }
+            PrefNote("With click to pause off, clicking the video shows or hides the controls.")
         }
     }
 }
@@ -499,39 +552,70 @@ struct PlaybackSettings: View {
 
 struct ServerSettings: View {
     @EnvironmentObject var emby: Emby
+    @Environment(\.dismiss) var dismiss
+    @State private var busy: String?
+
+    func connect(_ srv: SavedServer) {
+        guard srv.token != nil else { emby.switchServer(); dismiss(); return }
+        busy = srv.id
+        Task {
+            let ok = await emby.resume(srv)
+            busy = nil
+            if !ok { emby.switchServer() }
+            dismiss()
+        }
+    }
 
     var body: some View {
-        SettingsGroup(title: "Account") {
-            if let user = emby.currentServer?.user, !user.isEmpty {
-                SettingRow(label: "User") { Text(user).foregroundColor(.secondary).textSelection(.enabled) }
-            }
-            SettingRow(label: "Signed in to \(emby.currentServerName)") {
-                Button("Sign Out", role: .destructive) { emby.logout() }
-            }
-        }
-        SettingsGroup(title: "Saved servers",
-                      note: "Removing a server forgets its saved sign-in. You can add servers from the sign-in screen (Switch Server).") {
-            if emby.servers.isEmpty { Text("No saved servers.").foregroundColor(.secondary) }
-            ForEach(emby.servers) { s in
-                HStack(spacing: 12) {
-                    Image(systemName: "server.rack").frame(width: 22)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(s.name).bold()
-                            if s.id == emby.server.lowercased() {
-                                Text("Current").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Capsule().fill(Color.accentColor.opacity(0.6)))
-                            }
-                        }
-                        Text(s.user.isEmpty ? s.url : "\(s.user) · \(s.url)").font(.caption).foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Text(s.token != nil ? "Signed in" : "Signed out").font(.caption).foregroundColor(.secondary)
-                    Button("Remove", role: .destructive) { emby.removeServer(s) }
-                        .disabled(s.id == emby.server.lowercased())
-                        .help(s.id == emby.server.lowercased() ? "Switch to another server first" : "")
+        PrefSection {
+            PrefRow(label: "Connected to") {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(emby.currentServerName).bold()
+                    Text(emby.currentServer?.user.isEmpty == false ? "\(emby.currentServer!.user) · \(emby.server)" : emby.server)
+                        .font(.callout).foregroundColor(.secondary).textSelection(.enabled)
                 }
             }
+            PrefRow {
+                HStack(spacing: 10) {
+                    Button("Sign Out", role: .destructive) { emby.logout(); dismiss() }
+                }
+            }
+        }
+        PrefSection(last: true) {
+            PrefRow(label: "Servers") {
+                VStack(alignment: .leading, spacing: 0) {
+                    if emby.servers.isEmpty { Text("No saved servers.").foregroundColor(.secondary).padding(12) }
+                    ForEach(Array(emby.servers.enumerated()), id: \.element.id) { i, srv in
+                        let current = srv.id == emby.server.lowercased()
+                        HStack(spacing: 12) {
+                            Image(systemName: "server.rack").foregroundColor(.secondary).frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(srv.name).fontWeight(.semibold)
+                                Text(srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)")
+                                    .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer(minLength: 12)
+                            if current {
+                                Image(systemName: "checkmark.circle.fill").foregroundColor(Color(red: 0.24, green: 0.56, blue: 1))
+                                    .help("Connected")
+                            } else if busy == srv.id {
+                                Spinner().controlSize(.small)
+                            } else {
+                                Button("Connect") { connect(srv) }
+                                Button { emby.removeServer(srv) } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.borderless).help("Remove this server and its sign-in")
+                            }
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(i % 2 == 0 ? Color.white.opacity(0.04) : Color.clear)
+                    }
+                }
+                .frame(width: 440)
+                .background(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1)))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            PrefRow { Button("Add Server…") { emby.switchServer(); dismiss() } }
+            PrefNote("Connect switches Cove to that server. Add Server opens the sign-in screen.")
         }
     }
 }
