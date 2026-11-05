@@ -6,9 +6,11 @@ A Netflix-style native macOS client for [Emby](https://emby.media), written in S
 
 ## Install
 
-1. Download `EmbyFlix.zip` from [Releases](https://github.com/J0n4e/Embyfix/releases/latest) and unzip it.
-2. Move the app to **Applications**. (It shows as **Cove**; the file is still called EmbyFlix.app until it updates itself, then it becomes Cove.app.)
+1. Download `Cove.zip` from [Releases](https://github.com/J0n4e/Embyfix/releases/latest) and unzip it.
+2. Move **Cove.app** to **Applications**.
 3. The first time, right-click the app and choose **Open**. The app is ad-hoc signed, not notarized.
+
+**Coming from EmbyFlix?** Cove is the new name of EmbyFlix and a separate download (EmbyFlix can't update itself to Cove). The first time Cove opens it copies your EmbyFlix settings, saved servers and sign-in, so there is nothing to set up again. You can delete EmbyFlix afterwards.
 
 Closing the window quits the app; click the Dock icon to open it again.
 
@@ -64,14 +66,14 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 
 ```sh
 swift run                 # run in development
-./make-app.sh             # build dist/EmbyFlix.app (universal, ad-hoc signed)
-VERSION=v1.8.4 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+./make-app.sh             # build dist/Cove.app (universal, ad-hoc signed)
+VERSION=v1.9.0 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build EmbyFlix.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.8.4`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.9.0`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 

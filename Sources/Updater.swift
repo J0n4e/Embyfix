@@ -22,7 +22,7 @@ final class Updater: ObservableObject {
 
     /// Raw version from the bundle ("v1.2"), nil when run outside a built app.
     var current: String? {
-        let v = Bundle.main.infoDictionary?["EmbyFlixVersion"] as? String
+        let v = Bundle.main.infoDictionary?["CoveVersion"] as? String
         return (v?.isEmpty ?? true) ? nil : v
     }
 
@@ -131,7 +131,7 @@ final class Updater: ObservableObject {
             try FileManager.default.moveItem(at: tmp, to: zip)
             let out = work.appendingPathComponent("new")
             guard await run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
-            // Any app in the zip: releases ship EmbyFlix.app (so older updaters can still install them) and later Cove.app
+            // Any app in the zip (releases ship Cove.app)
             let found = (try? FileManager.default.contentsOfDirectory(at: out, includingPropertiesForKeys: nil)) ?? []
             guard let newApp = found.first(where: { $0.pathExtension == "app" }) else { throw Err("The download didn't contain the app.") }
             guard await run("/usr/bin/codesign", ["-v", newApp.path]) == 0 else { throw Err("The downloaded app failed its signature check.") }
@@ -142,8 +142,8 @@ final class Updater: ObservableObject {
     }
 
     /// Hands off to a small shell script that waits for us to quit, swaps the bundle (restoring the old one if
-    /// anything fails), clears quarantine and opens the new app. The app is installed as Cove.app next to the
-    /// old one, so an EmbyFlix.app install is renamed with its first update.
+    /// anything fails), clears quarantine and opens the new app. It is always installed as Cove.app, so a copy
+    /// renamed by hand gets its proper name back with the next update.
     private func relaunch(replacing target: URL, with newApp: URL, work: URL) throws {
         let script = """
         #!/bin/sh

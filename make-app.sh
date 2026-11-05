@@ -1,9 +1,8 @@
 #!/bin/bash
-# Builds a release app (with icon) in ./dist. The app is called Cove; the bundle file stays EmbyFlix.app
-# for now so updaters of 1.8.3 and older (which look for EmbyFlix.app in the download) can install it.
+# Builds a release Cove.app (with icon) in ./dist
 set -euo pipefail
 cd "$(dirname "$0")"
-APP=dist/EmbyFlix.app
+APP=dist/Cove.app
 # Version shown in the app: $VERSION if given (e.g. "v0.5Beta"), else the latest git tag plus commits since.
 VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo dev)}"
 SHORT=$(echo "$VERSION" | sed -E 's/^v//; s/^([0-9]+(\.[0-9]+)*).*/\1/'); [[ "$SHORT" =~ ^[0-9] ]] || SHORT=0.0
@@ -14,8 +13,8 @@ BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN/EmbyFlix" "$APP/Contents/MacOS/EmbyFlix"
-cp -R "$BIN/EmbyFlix_EmbyFlix.bundle" "$APP/Contents/Resources/"
+cp "$BIN/Cove" "$APP/Contents/MacOS/Cove"
+cp -R "$BIN/Cove_Cove.bundle" "$APP/Contents/Resources/"
 
 # Icon: build .icns from Sources/Resources/AppIcon.png
 ICONSET=$(mktemp -d)/AppIcon.iconset
@@ -32,13 +31,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>Cove</string>
   <key>CFBundleDisplayName</key><string>Cove</string>
-  <key>CFBundleIdentifier</key><string>EmbyFlix</string>
-  <key>CFBundleExecutable</key><string>EmbyFlix</string>
+  <key>CFBundleIdentifier</key><string>eu.jonae.cove</string>
+  <key>CFBundleExecutable</key><string>Cove</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$SHORT</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
-  <key>EmbyFlixVersion</key><string>$VERSION</string>
+  <key>CoveVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>

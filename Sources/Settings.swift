@@ -181,7 +181,7 @@ struct AboutSettings: View {
     @State private var backupMessage: String?
 
     /// Saved servers and sign-ins: kept by Reset, and never written to or read from a settings file.
-    static let keep: Set<String> = ["server", "token", "uid", "servers", "did"]
+    static let keep: Set<String> = ["server", "token", "uid", "servers", "did", "importedEmbyFlix"]
 
     /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
     /// order and window positions). The saved servers and sign-ins are kept.
