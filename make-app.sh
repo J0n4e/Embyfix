@@ -16,20 +16,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/Cove" "$APP/Contents/MacOS/Cove"
 cp -R "$BIN/Cove_Cove.bundle" "$APP/Contents/Resources/"
 
-# Icon: build .icns from Sources/Resources/AppIcon.png. The file is used as it is drawn; it is first saved as a
-# real PNG cropped to a centered square here, so a JPEG or a not-quite-square image doesn't break iconutil.
-ICONTMP=$(mktemp -d)
-ICON="$ICONTMP/AppIcon.png"
-sips -s format png Sources/Resources/AppIcon.png --out "$ICON" >/dev/null
-IW=$(sips -g pixelWidth "$ICON" | awk '/pixelWidth/ {print $2}')
-IH=$(sips -g pixelHeight "$ICON" | awk '/pixelHeight/ {print $2}')
-IS=$(( IW < IH ? IW : IH ))
-sips -c "$IS" "$IS" "$ICON" >/dev/null
-ICONSET="$ICONTMP/AppIcon.iconset"
+# Icon: build .icns from Sources/Resources/AppIcon.png
+ICONSET=$(mktemp -d)/AppIcon.iconset
 mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do
-  sips -z $s $s "$ICON" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) "$ICON" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $s $s Sources/Resources/AppIcon.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) Sources/Resources/AppIcon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
