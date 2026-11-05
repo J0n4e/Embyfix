@@ -18,6 +18,13 @@ After that, Cove keeps itself up to date. It checks for new releases at launch a
 
 ## Features
 
+### Apple TV look (v1.10)
+- **Home:** a full-width banner with the title's logo, "TV Show · Comedy · 2011", a short summary, a white **Play** pill and round glass **+** (favorite) and **i** (more info) buttons. Page dots sit at the bottom and arrows appear on hover.
+- **Continue Watching:** wide rounded cards with the title, episode and a "▶ ━ 42m" line.
+- **Show and movie pages:** a full-width backdrop with the logo, genres, rating, a two-line summary with **MORE**, year, length and 4K/HD/CC badges, the Play pill and glass buttons, and "Starring … / Director …" on the right.
+- **Episodes:** a **Season ⌃⌄** menu and a row of Apple TV episode cards ("EPISODE 1", title, summary, "▶ 59m"). Row, grid or list can be chosen next to the heading or in Settings.
+- **Player:** big glass back / play-pause / forward circles in the middle; glass groups for picture in picture, full screen and info (top left), volume (top right), and episodes, subtitles, quality, chapters and options (bottom right). The episode and show names sit bottom-left, above a glass scrubber.
+
 ### Browsing
 - Sign in to one or more Emby servers (http or https). Saved servers can be switched from the sidebar.
 - Home page with a rotating featured banner (white text with a black outline over the picture), Continue Watching, and rows for each library.
