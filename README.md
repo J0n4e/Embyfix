@@ -87,13 +87,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/Cove.app (universal, ad-hoc signed)
-VERSION=v1.14.1 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.14.2 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.14.1` (small releases use X.Y.Z, major ones X.Y)). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.14.2` (small releases use X.Y.Z, major ones X.Y)). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
