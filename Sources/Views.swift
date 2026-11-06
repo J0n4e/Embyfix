@@ -471,8 +471,14 @@ struct TopNavBar: View {
         // fixed height keeps the bar from growing: nothing moves when Back appears or disappears.
         HStack(spacing: 16) {
             HStack { if let back { TopBackButton(action: back) } }
+                .fixedSize()   // never squeezed below Back's own width
                 .frame(maxWidth: .infinity, alignment: .leading)
-            TopNavButtons().layoutPriority(1)
+            // On a narrow window the sections don't all fit: the pill then scrolls sideways instead of
+            // spilling past the window edge, where its buttons can't be clicked and Back gets squeezed out
+            ViewThatFits(in: .horizontal) {
+                TopNavButtons()
+                ScrollView(.horizontal, showsIndicators: false) { TopNavButtons() }
+            }.layoutPriority(1)
             TopNavTools().fixedSize()
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
