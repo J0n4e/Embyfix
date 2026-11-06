@@ -257,7 +257,7 @@ struct ClassicAboutSettings: View {
             }
             ClassicSettingRow(label: "Updates") { UpdateRow() }
             ClassicSettingRow(label: "Source & releases") {
-                Link("github.com/J0n4e/Embyfix", destination: URL(string: "https://github.com/J0n4e/Embyfix/releases")!)
+                Link("github.com/J0n4e/cove", destination: URL(string: "https://github.com/J0n4e/cove/releases")!)
             }
         }
         ClassicSettingsGroup(title: "Save and load settings",

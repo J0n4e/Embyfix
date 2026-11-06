@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class Updater: ObservableObject {
     static let shared = Updater()
-    static let repo = "J0n4e/Embyfix"
+    static let repo = "J0n4e/cove"
 
     enum Status: Equatable { case idle, checking, upToDate, available(String), installing, failed(String) }
     @Published var status: Status = .idle

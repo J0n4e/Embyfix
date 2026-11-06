@@ -1055,7 +1055,10 @@ struct Hero: View {
     var body: some View {
         let item = items[index % items.count]
         ZStack(alignment: .bottomLeading) {
-            Color.clear.frame(maxWidth: .infinity).frame(height: 560)
+            // The banner takes the picture's own shape (16:9), so the whole backdrop shows instead of a cropped
+            // strip; it never gets shorter than 460 pt (narrow windows) or taller than 860 pt (very wide ones)
+            Color.clear.frame(maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
+                .frame(minHeight: 460, maxHeight: 860)
                 .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
                 .id("b" + item.id).transition(.opacity)
             // Dark fade on the left and at the bottom, so the text reads and the page flows into the rows
@@ -1112,7 +1115,6 @@ struct Hero: View {
             }
             .frame(maxWidth: .infinity).padding(.bottom, 26)
         }
-        .frame(height: 560)
         .overlay {
             if hover && items.count > 1 {
                 HStack {
