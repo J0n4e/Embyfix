@@ -2109,10 +2109,7 @@ struct ClassicDetailView: View {
     }
 
     /// Language name from "English (SRT)" etc., so "eng" and "en" tracks group together.
-    static func langName(_ st: MStream) -> String {
-        let t = st.DisplayTitle ?? st.Language ?? "Unknown"
-        return t.components(separatedBy: " (").first ?? t
-    }
+    static func langName(_ st: MStream) -> String { subLangName(st) }   // same rule as "Always load…"
 
     /// Subtitle languages found in an item, keyed by language code.
     static func subLangs(_ f: Full?) -> [(code: String, name: String)] {
