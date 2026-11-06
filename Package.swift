@@ -3,5 +3,5 @@ import PackageDescription
 let package = Package(
     name: "Cove",
     platforms: [.macOS(.v14)],
-    targets: [.executableTarget(name: "Cove", path: "Sources", resources: [.copy("Resources/AppIcon.png")])]
+    targets: [.executableTarget(name: "Cove", path: "Sources", resources: [.copy("Resources/AppIcon.png"), .copy("Resources/AppIconClassic.png")])]
 )

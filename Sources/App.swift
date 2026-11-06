@@ -7,19 +7,25 @@ struct CoveApp: App {
     @StateObject private var emby = Emby()
     @AppStorage("accent") private var accent = "red"
     @AppStorage("bg") private var bg = "black"
+    @AppStorage("theme") private var theme = "apple"
     init() {
         Self.importEmbyFlixSettings()
         NSApplication.shared.setActivationPolicy(.regular)
-        // Show AppIcon.png exactly as drawn while the app runs (newer macOS redraws .icns icons in its own style,
-        // so the built app looked different from `swift run`). The .icns from Info.plist still serves Finder.
-        // Loaded from the SwiftPM resource bundle; Bundle.module crashes if that bundle is missing.
+        Self.applyIcon()
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+    /// Dock icon for the chosen theme, shown exactly as drawn (newer macOS redraws .icns icons in its own
+    /// style). Loaded from the SwiftPM resource bundle; Bundle.module crashes if that bundle is missing.
+    /// The .icns from Info.plist still serves Finder.
+    static func applyIcon() {
+        let name = (UserDefaults.standard.string(forKey: "theme") ?? "apple") == "apple" ? "AppIcon" : "AppIconClassic"
         if let res = Bundle.main.url(forResource: "Cove_Cove", withExtension: "bundle"),
-           let url = Bundle(url: res)?.url(forResource: "AppIcon", withExtension: "png"),
+           let url = Bundle(url: res)?.url(forResource: name, withExtension: "png"),
            let img = NSImage(contentsOf: url) {
             NSApplication.shared.applicationIconImage = img
         }
-        NSApplication.shared.activate(ignoringOtherApps: true)
     }
+
     /// Cove used to be EmbyFlix, a separate app with its own preferences. The first time Cove starts it copies
     /// those over (settings, saved servers and sign-ins), so nobody has to set it up again.
     static func importEmbyFlixSettings() {
@@ -32,7 +38,9 @@ struct CoveApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            // Classic = the original Cove screens (v1.9.2), Apple TV = the Apple TV screens; switching swaps them all
+            Group { if theme == "apple" { RootView() } else { ClassicRootView() } }
+                .id(theme)
                 .environmentObject(emby)
                 .environment(\.appBG, Theme.bg(bg))
                 .tint(Theme.accent(accent))
@@ -41,10 +49,28 @@ struct CoveApp: App {
                 .task { await Updater.shared.checkOnLaunch() }
         }
         .commands {
+            // Cove → Settings… (⌘,), as in the Apple TV app
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    if theme == "apple" { NavState.shared.showSettings = true } else { ClassicNavState.shared.showSettings = true }
+                }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await Updater.shared.check(interactive: true) } }
             }
         }
+        // Videos play in their own window, like the Apple TV app
+        Window("Player", id: "player") {
+            PlayerWindow()
+                .environmentObject(emby)
+                .environment(\.appBG, Theme.bg(bg))
+                .tint(Theme.accent(accent))
+                .preferredColorScheme(.dark)
+                .frame(minWidth: 640, minHeight: 360)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 760)
     }
 }
 
