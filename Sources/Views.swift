@@ -123,12 +123,13 @@ struct LoginView: View {
     @EnvironmentObject var emby: Emby
     @State private var adding = false
     @State private var server = ""
+    @State private var serverLabel = ""   // optional name shown in the server list
     @State private var user = ""
     @State private var pw = ""
     @State private var error = ""
     @State private var busy = false
     @FocusState private var focus: Field?
-    enum Field { case server, user, pw }
+    enum Field { case name, server, user, pw }
 
     var showForm: Bool { adding || emby.servers.isEmpty }
 
@@ -176,7 +177,7 @@ struct LoginView: View {
                     }
                 }
                 Text(s.name).font(.headline).lineLimit(1)
-                Text(s.user.isEmpty ? s.url : "\(s.user) · \(s.url)")
+                Text((s.user.isEmpty ? s.url : "\(s.user) · \(s.url)") + " · " + emby.kindLabel(s))
                     .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
             }
             .frame(width: 150).contentShape(Rectangle())
@@ -200,6 +201,8 @@ struct LoginView: View {
                 Spacer()
                 if !emby.servers.isEmpty { Image(systemName: "chevron.left").hidden() }
             }.padding(.bottom, 6)
+            TextField("Name (optional, e.g. Home Jellyfin)", text: $serverLabel).focused($focus, equals: .name)
+                .onSubmit { focus = .server }
             TextField("Server (e.g. 192.168.1.10:8096)", text: $server).focused($focus, equals: .server)
                 .onSubmit { focus = .user }
             TextField("Username", text: $user).focused($focus, equals: .user).onSubmit { focus = .pw }
@@ -217,7 +220,7 @@ struct LoginView: View {
 
     func startAdd() { server = ""; user = ""; pw = ""; error = ""; adding = true }
 
-    func edit(_ s: SavedServer) { server = s.url; user = s.user; pw = ""; error = ""; adding = true; focus = .pw }
+    func edit(_ s: SavedServer) { server = s.url; serverLabel = s.name; user = s.user; pw = ""; error = ""; adding = true; focus = .pw }
 
     func open(_ s: SavedServer) {
         error = ""
@@ -234,7 +237,7 @@ struct LoginView: View {
         guard !busy else { return }
         busy = true; error = ""
         Task {
-            do { try await emby.login(server: server, user: user, pw: pw); pw = ""; adding = false }
+            do { try await emby.login(server: server, user: user, pw: pw, name: serverLabel); pw = ""; adding = false }
             catch { self.error = "Couldn't sign in. Check server address and credentials." }
             busy = false
         }

@@ -663,8 +663,10 @@ struct ServerSettings: View {
                         HStack(spacing: 12) {
                             Image(systemName: "server.rack").foregroundColor(.secondary).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(srv.name).fontWeight(.semibold)
-                                Text(srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)")
+                                // Click the name to rename it (helps tell servers apart)
+                                TextField("Name", text: Binding(get: { srv.name }, set: { emby.renameServer(srv, $0) }))
+                                    .textFieldStyle(.plain).fontWeight(.semibold).frame(maxWidth: 220)
+                                Text((srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)") + " · " + emby.kindLabel(srv))
                                     .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer(minLength: 12)
@@ -688,7 +690,7 @@ struct ServerSettings: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             PrefRow { Button("Add Server…") { emby.switchServer(); dismiss() } }
-            PrefNote("Connect switches Cove to that server. Add Server opens the sign-in screen.")
+            PrefNote("Click a server's name to rename it. Connect switches Cove to that server. Add Server opens the sign-in screen.")
         }
     }
 }

@@ -248,6 +248,16 @@ final class Emby: ObservableObject {
         saveServers()
     }
 
+    /// Renames a saved server (empty keeps the old name).
+    func renameServer(_ e: SavedServer, _ name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty, let i = servers.firstIndex(where: { $0.id == e.id }) else { return }
+        servers[i].name = n; saveServers()
+    }
+
+    /// "Jellyfin" or "Emby", as last detected for that server.
+    func kindLabel(_ e: SavedServer) -> String { d.bool(forKey: "jellyfin-" + e.id) ? "Jellyfin" : "Emby" }
+
     func removeServer(_ e: SavedServer) {
         servers.removeAll { $0.id == e.id }
         saveServers()
@@ -323,7 +333,8 @@ final class Emby: ObservableObject {
         "MediaBrowser Client=\"Cove\", Device=\"Mac\", DeviceId=\"\(deviceId)\", Version=\"1.0\""
     }
 
-    func login(server raw: String, user: String, pw: String) async throws {
+    /// `name`: what to call the server in the list; empty uses the name the server reports.
+    func login(server raw: String, user: String, pw: String, name label: String = "") async throws {
         let s = Self.normalize(raw)
         var r = URLRequest(url: URL(string: s + "/Users/AuthenticateByName")!)
         r.httpMethod = "POST"
@@ -341,7 +352,8 @@ final class Emby: ObservableObject {
         server = s; token = t; userId = u
         d.set(s, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
         await refreshServerKind()
-        let name = await serverName(s) ?? servers.first { $0.id == s.lowercased() }?.name ?? s
+        let typed = label.trimmingCharacters(in: .whitespaces)
+        let name = typed.isEmpty ? (await serverName(s) ?? servers.first { $0.id == s.lowercased() }?.name ?? s) : typed
         upsert(SavedServer(url: s, name: name, user: user, token: t, userId: u))
     }
 
