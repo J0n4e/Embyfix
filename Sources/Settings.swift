@@ -156,6 +156,7 @@ func menuPicker<T: Hashable>(_ sel: Binding<T>, _ opts: [(T, String)]) -> some V
 // MARK: - General
 
 struct GeneralSettings: View {
+    @AppStorage("theme") private var theme = "apple"
     @AppStorage("accent") private var accent = "red"
     @AppStorage("bg") private var bg = "black"
     @AppStorage("navStyle") private var navStyle = "sidebar"
@@ -193,6 +194,16 @@ struct GeneralSettings: View {
     }
 
     var body: some View {
+        PrefSection {
+            PrefRow(label: "Theme") {
+                Picker("", selection: $theme) {
+                    Text("Apple TV").tag("apple")
+                    Text("Classic").tag("classic")
+                }.pickerStyle(.radioGroup).labelsHidden()
+            }
+            PrefNote("Apple TV: full-width banners, glass buttons and an Apple TV-style player. Classic: the original Cove look.")
+        }
+        .onChange(of: theme) { CoveApp.applyIcon() }
         PrefSection {
             PrefRow(label: "Accent color") { swatches(Theme.accents, selection: $accent) }
         }

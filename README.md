@@ -18,7 +18,10 @@ After that, Cove keeps itself up to date. It checks for new releases at launch a
 
 ## Features
 
-### Apple TV look (v1.10)
+### Themes (v1.11)
+Settings → General → **Theme**: **Apple TV** (the default) or **Classic** (the original Cove look). The theme changes the home banner, cards, title pages, buttons, sidebar, Back button, player controls and the Dock icon; switching is instant.
+
+### Apple TV theme
 - **Home:** a full-width banner with the title's logo, "TV Show · Comedy · 2011", a short summary, a white **Play** pill and round glass **+** (favorite) and **i** (more info) buttons. Page dots sit at the bottom and arrows appear on hover.
 - **Continue Watching:** wide rounded cards with the title, episode and a "▶ ━ 42m" line.
 - **Show and movie pages:** a full-width backdrop with the logo, genres, rating, a two-line summary with **MORE**, year, length and 4K/HD/CC badges, the Play pill and glass buttons, and "Starring … / Director …" on the right.
