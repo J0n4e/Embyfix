@@ -38,8 +38,9 @@ struct CoveApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .id(theme)   // switching the theme redraws every page
+            // Classic = the original Cove screens (v1.9.2), Apple TV = the Apple TV screens; switching swaps them all
+            Group { if theme == "apple" { RootView() } else { ClassicRootView() } }
+                .id(theme)
                 .environmentObject(emby)
                 .environment(\.appBG, Theme.bg(bg))
                 .tint(Theme.accent(accent))
@@ -50,7 +51,9 @@ struct CoveApp: App {
         .commands {
             // Cove → Settings… (⌘,), as in the Apple TV app
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { NavState.shared.showSettings = true }
+                Button("Settings…") {
+                    if theme == "apple" { NavState.shared.showSettings = true } else { ClassicNavState.shared.showSettings = true }
+                }
                     .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(after: .appInfo) {

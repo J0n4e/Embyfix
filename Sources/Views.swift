@@ -35,18 +35,6 @@ struct OnAccent: ViewModifier {
 }
 
 /// Apple TV glass: dark see-through fill, blur and a thin light outline (same as the round Back button).
-struct ClassicPillStyle: ViewModifier {
-    @AppStorage("accent") private var name = "red"
-    let active: Bool
-    func body(content: Content) -> some View {
-        content.font(.callout.weight(.medium))
-            .foregroundColor(active ? Theme.onAccent(name) : nil)
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(active ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.1)))
-            .clipShape(Capsule())
-    }
-}
-
 struct GlassCapsule: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -60,11 +48,7 @@ extension View { func glassCapsule() -> some View { modifier(GlassCapsule()) } }
 /// Toolbar button in Apple TV glass; `active` (a filter in use) gets a lighter fill.
 struct PillStyle: ViewModifier {
     let active: Bool
-    @AppStorage("theme") private var theme = "apple"
     func body(content: Content) -> some View {
-        if theme != "apple" { content.modifier(ClassicPillStyle(active: active)) } else { tv(content) }
-    }
-    func tv(_ content: Content) -> some View {
         content.font(.callout.weight(.medium))
             .foregroundStyle(Color.white)
             .padding(.horizontal, 16).frame(height: 36)
@@ -77,7 +61,7 @@ struct PillStyle: ViewModifier {
 extension View {
     /// Thin white outline that follows the rounded corners (posters, episode thumbnails, preview card).
     func thinBorder(_ radius: CGFloat) -> some View {
-        overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(AppTheme.isApple ? 0.12 : 0.85), lineWidth: 1))
+        overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(0.12), lineWidth: 1))
     }
     func pill(active: Bool = false) -> some View { modifier(PillStyle(active: active)) }
     func onAccent() -> some View { modifier(OnAccent()) }
@@ -85,12 +69,6 @@ extension View {
         self.font(.title3).frame(width: 44, height: 44)
             .background(Color.white.opacity(0.14)).clipShape(Circle())
     }
-}
-
-/// Look of the app: "apple" (Apple TV style, the default) or "classic" (the original Cove look).
-/// Settings → General → Theme.
-enum AppTheme {
-    static var isApple: Bool { (UserDefaults.standard.string(forKey: "theme") ?? "apple") == "apple" }
 }
 
 let alphaLetters: [String] = ["#"] + "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map { String($0) }
@@ -300,10 +278,10 @@ struct HomeView: View {
     /// Sidebar row like the Apple TV app: blue icon, white text.
     func sideLabel(_ title: String, _ icon: String) -> some View {
         Label {
-            Text(title).foregroundColor(AppTheme.isApple ? .white : .accentColor)
+            Text(title).foregroundColor(.white)
         } icon: {
-            Image(systemName: icon).foregroundStyle(AppTheme.isApple ? AnyShapeStyle(Color(red: 0.24, green: 0.56, blue: 1)) : AnyShapeStyle(TintShapeStyle()))
-        }.font(.system(size: AppTheme.isApple ? 15 : 13))
+            Image(systemName: icon).foregroundColor(Color(red: 0.24, green: 0.56, blue: 1))
+        }.font(.system(size: 15))
     }
 
     func icon(_ lib: LibPref) -> String {
@@ -560,39 +538,11 @@ struct HideToolbarTitle: ViewModifier {
 }
 extension View { func hideToolbarTitle() -> some View { modifier(HideToolbarTitle()) } }
 
-struct ClassicBackButton: View {
-    @EnvironmentObject var emby: Emby
-    let action: () -> Void
-    @State private var hover = false
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left").font(.system(size: 13, weight: .bold))
-                Text("Back").font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            .background(Capsule().fill(Color.white.opacity(hover ? 0.28 : 0.18)))
-            .overlay(Capsule().stroke(Color.white.opacity(0.5), lineWidth: 1))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
-        .keyboardShortcut("[", modifiers: .command)
-        .help("Back (⌘[)")
-        .disabled(emby.playing != nil)
-    }
-}
-
 struct TopBackButton: View {
     @EnvironmentObject var emby: Emby
-    @AppStorage("theme") private var theme = "apple"
     let action: () -> Void
     @State private var hover = false
     var body: some View {
-        if theme != "apple" { ClassicBackButton(action: action) } else { tvButton }
-    }
-    var tvButton: some View {
         Button(action: action) {
             // Apple TV style: a round glass ‹ button
             Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
@@ -1016,7 +966,7 @@ struct HomeContent: View {
                     VStack(alignment: .leading, spacing: 12) {
                         rowTitle(row).padding(.leading, 52)
                         if row.feed == .resume || row.feed == .nextUp {
-                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: AppTheme.isApple ? 340 : 260, spacing: 22, inset: 52) {
+                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 340, spacing: 22, inset: 52) {
                                 ResumeCard(item: row.items[$0])
                             }
                         } else {
@@ -1029,7 +979,7 @@ struct HomeContent: View {
                 if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
             }.padding(.bottom, 40)
         }
-        .ignoresSafeArea(edges: AppTheme.isApple ? .top : [])   // Apple TV: banner runs up under the title bar
+        .ignoresSafeArea(edges: .top)          // banner runs up under the title bar, as in Apple TV
         .background(bg)
         .task(id: reloadToken) { rows = await emby.loadHome(); loading = false }
     }
@@ -1044,7 +994,7 @@ extension View {
     }
 }
 
-struct TVHero: View {
+struct Hero: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.appBG) var bg
     let items: [Item]
@@ -1172,8 +1122,8 @@ struct TitleLogo: View {
     }
 }
 
-/// Apple TV landscape card for the Continue Watching row: still image, accent progress bar, time left.
-struct TVResumeCard: View {
+/// Landscape card for the Continue Watching row: still image, accent progress bar, time left.
+struct ResumeCard: View {
     @EnvironmentObject var emby: Emby
     let item: Item
     @State private var hover = false
@@ -1298,188 +1248,6 @@ struct FeedView: View {
     }
 }
 
-/// Home banner in the chosen theme.
-struct Hero: View {
-    @AppStorage("theme") private var theme = "apple"
-    let items: [Item]
-    var body: some View {
-        if theme == "apple" { TVHero(items: items) } else { ClassicHero(items: items).padding(.top, 8) }
-    }
-}
-
-/// Continue Watching / Up Next card in the chosen theme.
-struct ResumeCard: View {
-    @AppStorage("theme") private var theme = "apple"
-    let item: Item
-    var body: some View {
-        if theme == "apple" { TVResumeCard(item: item) } else { ClassicResumeCard(item: item) }
-    }
-}
-
-// MARK: Classic theme (the original Cove look)
-
-struct ClassicHero: View {
-    @EnvironmentObject var emby: Emby
-    let items: [Item]
-    @State private var index = 0
-
-    func meta(_ item: Item) -> [String] {
-        var m: [String] = []
-        if let y = item.ProductionYear { m.append(String(y)) }
-        if let t = item.RunTimeTicks, t > 0 { m.append(runtimeText(t)) }
-        if let g = item.Genres?.first { m.append(g) }
-        return m
-    }
-
-    var body: some View {
-        let item = items[index % items.count]
-        ZStack(alignment: .bottomLeading) {
-            Color.clear.frame(maxWidth: .infinity).frame(height: 440)
-                .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
-                .id("b" + item.id).transition(.opacity)
-            VStack(alignment: .leading, spacing: 14) {
-                Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2).blackOutline(2)
-                if item.SeriesName != nil {
-                    Text("S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)  \(item.Name)")
-                        .font(.headline).foregroundColor(.white).blackOutline()
-                }
-                HStack(spacing: 12) {
-                    ForEach(meta(item), id: \.self) { Text($0) }
-                    if let r = item.CommunityRating {
-                        HStack(spacing: 3) { Image(systemName: "star.fill"); Text(String(format: "%.1f", r)) }
-                            .foregroundColor(.yellow)
-                    }
-                }.font(.subheadline).foregroundColor(.white).blackOutline()
-                Text(item.Overview ?? "").font(.body).lineLimit(3).frame(maxWidth: 620, alignment: .leading)
-                    .foregroundColor(.white).blackOutline()
-                HStack(spacing: 12) {
-                    Button { Task { await emby.play(item) } } label: {
-                        Label("Play", systemImage: "play.fill").font(.system(size: 16, weight: .bold))
-                            .padding(.horizontal, 26).frame(height: 44)
-                            .background(.white).foregroundColor(.black).cornerRadius(6)
-                    }.buttonStyle(.plain)
-                    NavigationLink(value: item) {
-                        Label("More Info", systemImage: "info.circle").font(.system(size: 16, weight: .bold))
-                            .padding(.horizontal, 22).frame(height: 44)
-                            .background(Color.gray.opacity(0.55)).foregroundColor(.white).cornerRadius(6)
-                    }.buttonStyle(.plain)
-                    Spacer()
-                    HStack(spacing: 6) {
-                        ForEach(items.indices, id: \.self) { i in
-                            let on = i == index % items.count
-                            Capsule().fill(on ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.4)))
-                                .frame(width: on ? 22 : 8, height: 4)
-                                .overlay(Capsule().stroke(Color.black, lineWidth: 1))
-                                .shadow(color: .black.opacity(0.7), radius: 3)
-                                .contentShape(Rectangle().inset(by: -6))
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.8)) { index = i } }
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 44).padding(.vertical, 36)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .id("t" + item.id).transition(.opacity)
-        }
-        .frame(height: 440)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 32)
-        .foregroundColor(.white)
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
-                if Task.isCancelled { break }
-                withAnimation(.easeInOut(duration: 1.0)) { index += 1 }
-            }
-        }
-    }
-}
-
-/// Landscape card for the Continue Watching row: still image, accent progress bar, time left.
-struct ClassicResumeCard: View {
-    @EnvironmentObject var emby: Emby
-    let item: Item
-    @State private var hover = false
-
-    var progress: Double { min(1, max(0, (item.UserData?.PlayedPercentage ?? 0) / 100)) }
-    var timeLeft: String? {
-        guard let total = item.RunTimeTicks, total > 0 else { return nil }
-        let left = max(0, total - (item.UserData?.PlaybackPositionTicks ?? 0))
-        return runtimeText(left) + " left"
-    }
-    var subtitle: String? {
-        if item.isEpisode { return "S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)" + (timeLeft.map { " · " + $0 } ?? "") }
-        return timeLeft
-    }
-    /// Card click: an episode opens its series page on that episode's season; a movie opens its own page.
-    func openPage() {
-        guard item.isEpisode, let sid = item.SeriesId else { emby.openRequest = item; return }
-        Task {
-            if let series = await emby.itemRecord(sid) {
-                emby.openSeason = item.ParentIndexNumber
-                emby.openRequest = series
-            }
-        }
-    }
-
-    /// Episodes have a landscape primary image; movies use their backdrop.
-    var imageURL: URL? {
-        item.isEpisode ? emby.image(item.Id, width: 520, plain: true) : emby.image(item.backdropId ?? item.Id, "Backdrop", width: 520)
-    }
-
-    var body: some View {
-        Group {
-            VStack(alignment: .leading, spacing: 6) {
-                AsyncImage(url: imageURL) { p in
-                    p.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
-                }
-                .frame(width: 260, height: 146).clipped()
-                // Title, bottom-left
-                .overlay(alignment: .bottomLeading) {
-                    Text(item.heroTitle)
-                        .font(.callout.weight(.semibold)).foregroundColor(.white).lineLimit(1)
-                        .shadow(color: .black.opacity(0.8), radius: 3)
-                        .padding(.leading, 10).padding(.trailing, 40).padding(.top, 28).padding(.bottom, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                }
-                // Series info (S3·E3 · 42m left), top-left
-                .overlay(alignment: .topLeading) {
-                    if let subtitle {
-                        Text(subtitle).font(.caption2.weight(.semibold)).foregroundColor(.white)
-                            .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(Capsule().fill(Color.black.opacity(0.35)))
-                            .padding(8)
-                    }
-                }
-                // White progress ring, bottom-right
-                .overlay(alignment: .bottomTrailing) {
-                    if progress > 0 && progress < 1 { ProgressRing(progress: progress).padding(.trailing, 10).padding(.bottom, 10) }
-                }
-                // Play button: resumes playback; clicking anywhere else on the card opens the page
-                .overlay {
-                    if hover {
-                        Button { Task { await emby.play(item) } } label: {
-                            Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundColor(.white)
-                                .shadow(radius: 6)
-                        }.buttonStyle(.plain).help("Resume")
-                    }
-                }
-                .cornerRadius(8)
-                .thinBorder(8)
-                .hoverLift()
-            }
-            .frame(width: 260, alignment: .leading)
-            .contentShape(Rectangle())
-            .onHover { hover = $0 }
-            .onTapGesture { openPage() }
-            .help(item.isEpisode ? "\(item.heroTitle) — \(item.Name)" : item.Name)
-        }
-    }
-}
-
 struct Backdrop: View {
     @EnvironmentObject var emby: Emby
     let id: String
@@ -1524,8 +1292,8 @@ struct PosterCard: View {
                         ProgressView(value: pct / 100).padding(.horizontal, 8).padding(.bottom, 8)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.isApple ? 12 : 8))
-                .thinBorder(AppTheme.isApple ? 12 : 8)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .thinBorder(12)
                 .modifier(HoverLift(hover: hover))
                 if showTitle || showYear {
                     VStack(alignment: centered ? .center : .leading, spacing: 2) {
@@ -2295,7 +2063,8 @@ struct DetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
-                if AppTheme.isApple { header; pickers } else { classicHeader }
+                header
+                pickers
                 if item.isSeries { episodesList }
                 if item.isBox { boxGrid }
                 castSection
@@ -2303,18 +2072,7 @@ struct DetailView: View {
                 similarSection
             }.padding(.bottom, 50)
         }
-        .ignoresSafeArea(edges: AppTheme.isApple ? .top : [])
-        .background(alignment: .top) {
-            // Classic: faded backdrop behind the header
-            if !AppTheme.isApple {
-                ZStack {
-                    Color.clear.frame(height: 520)
-                        .overlay { Backdrop(id: item.backdropId ?? item.Id) }
-                        .clipped().opacity(0.35)
-                    LinearGradient(colors: [Color.clear, bg], startPoint: .top, endPoint: .bottom)
-                }.frame(height: 520)
-            }
-        }
+        .ignoresSafeArea(edges: .top)
         .background(bg)
         .task {
             full = await emby.full(item.id)
@@ -2421,56 +2179,6 @@ struct DetailView: View {
         .frame(height: 600)
         .clipped()
         .foregroundColor(.white)
-    }
-
-    // Classic header: poster + info + pickers + buttons
-    var classicHeader: some View {
-        HStack(alignment: .top, spacing: 28) {
-            AsyncImage(url: emby.image(item.id, width: 500)) { img in
-                img.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: { ZStack { Color(white: 0.15); Text(item.Name).padding() } }
-            .frame(width: item.isEpisode ? 320 : 220, height: item.isEpisode ? 180 : 330)
-            .clipped().cornerRadius(10).shadow(color: .black.opacity(0.5), radius: 16, y: 8)
-            VStack(alignment: .leading, spacing: 14) {
-                Text(item.Name).font(.system(size: 46, weight: .black))
-                meta
-                if !simple { streamsRow }
-                classicButtons
-                if let tag = full?.Taglines?.first { Text(tag).font(.headline) }
-                Text(item.Overview ?? "").frame(maxWidth: 760, alignment: .leading)
-                let directors = (full?.People ?? []).filter { $0.`Type` == "Director" }.map { $0.Name }
-                if !directors.isEmpty {
-                    (Text("Director: ").foregroundColor(.secondary) + Text(directors.joined(separator: ", ")).bold())
-                        .font(.callout)
-                }
-            }
-        }.padding(.horizontal, 40).padding(.top, 40)
-    }
-
-    var classicButtons: some View {
-        let played = emby.isPlayed(item)
-        return HStack(spacing: 10) {
-            Button { playNow() } label: {
-                Label(playLabel, systemImage: "play.fill").bold()
-                    .padding(.horizontal, 24).frame(height: 44)
-                    .background(.white).foregroundColor(.black).clipShape(Capsule())
-            }.buttonStyle(.plain)
-            if let t = playTarget, emby.resumeAt(t) > 0 {
-                Button { playNow(from: 0) } label: { Label("Start Over", systemImage: "arrow.counterclockwise").pill() }
-                    .buttonStyle(.plain)
-            }
-            if let t = full?.RemoteTrailers?.first?.Url, let u = URL(string: t) {
-                Button { NSWorkspace.shared.open(u) } label: { Label("Trailer", systemImage: "film").pill() }.buttonStyle(.plain)
-            }
-            Button { Task { await emby.setPlayed(item.id, !played) } } label: {
-                if played { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).circleButton() }
-                else { Image(systemName: "checkmark.circle").circleButton() }
-            }.buttonStyle(.plain).help(played ? "Mark as unwatched" : "Mark as watched")
-            Button { Task { await emby.setFav(item.id, !emby.isFav(item)) } } label: {
-                if emby.isFav(item) { Image(systemName: "heart.fill").foregroundStyle(.tint).circleButton() }
-                else { Image(systemName: "heart").circleButton() }
-            }.buttonStyle(.plain).help("Favorite")
-        }
     }
 
     /// Version, audio, subtitle and quality pickers under the header (movies and episodes).
@@ -3724,11 +3432,11 @@ struct PlayerView: View {
                     LinearGradient(colors: [.black.opacity(0.45), .clear, .clear, .black.opacity(0.7)],
                                    startPoint: .top, endPoint: .bottom)
                         .ignoresSafeArea().allowsHitTesting(false)
-                    if AppTheme.isApple { centerControls.transition(.opacity) }
+                    centerControls.transition(.opacity)
                     VStack(spacing: 0) {
-                        if AppTheme.isApple { topBar } else { classicTopBar }
+                        topBar
                         Spacer()
-                        if AppTheme.isApple { bottomBar } else { classicBottomBar }
+                        bottomBar
                     }
                     .padding(.top, titleBarHeight)
                     .transition(.opacity)
@@ -3914,88 +3622,6 @@ struct PlayerView: View {
         }
         .padding(.horizontal, 20).padding(.top, 16 + windowButtonsGap)
         .environment(\.colorScheme, .dark)
-    }
-
-    // MARK: Classic theme bars
-
-    var classicTopBar: some View {
-        HStack(spacing: 16) {
-            // The pill that used to sit here is hidden (kept, not deleted): in full screen Esc does the job, and in a
-            // window it moved to the title bar (titleBarBack, now off too). Set inPlayerBackPill to true to bring it back.
-            if Self.inPlayerBackPill { BackPill { back() }.help(isFullScreen ? "Exit full screen (Esc)" : "Back (Esc)") }
-            AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
-                img.resizable().aspectRatio(contentMode: .fit)
-            } placeholder: { EmptyView() }
-            .frame(maxWidth: 160, maxHeight: 40, alignment: .leading)
-            Spacer()
-            Slider(value: $model.volume, in: 0...1).frame(width: 160).tint(.white).controlSize(.small)
-            Button { model.volume = model.volume > 0 ? 0 : 1 } label: {
-                Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 18))
-            }.buttonStyle(.plain)
-        }
-        .padding(.horizontal, 20).padding(.top, 14)
-    }
-
-    var classicBottomBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let l = episodeLine { Text(l).font(.system(size: 16, weight: .medium)).opacity(0.85) }
-                    Text(item.heroTitle).font(.system(size: 28, weight: .bold))
-                }
-                Spacer()
-                HStack(spacing: 26) {
-                    iconButton("captions.bubble", on: panel != nil) {
-                        withAnimation(.easeOut(duration: 0.2)) { panel = panel == nil ? .subtitles : nil }
-                    }.help("Subtitles, audio, quality & speed")
-                }
-            }
-
-            Slider(value: Binding(get: { scrubbing ? scrub : model.time },
-                                  set: { scrub = $0 }),
-                   in: 0...max(model.duration, 1)) { editing in
-                if editing { scrub = model.time; scrubbing = true }
-                else { model.seek(to: scrub); scrubbing = false }
-            }
-            .tint(accent).controlSize(.small)
-            .background(GeometryReader { g in
-                Color.clear.onAppear { sliderW = g.size.width }.onChange(of: g.size.width) { _, w in sliderW = w }
-            })
-            .onContinuousHover { ph in
-                if case .active(let p) = ph { hoverX = p.x } else { hoverX = nil }
-            }
-            .overlay(alignment: .bottomLeading) { scrubPreview }
-
-            HStack {
-                Text(fmt(scrubbing ? scrub : model.time))
-                Spacer()
-                Text("-\(fmt(max(0, model.duration - (scrubbing ? scrub : model.time))))  /  \(endClock)")
-            }
-            .font(.system(size: 14).monospacedDigit()).opacity(0.85)
-
-            HStack(spacing: 30) {
-                iconButton("backward.end.fill", size: 18) { if let p = prevEp { play(p) } else { model.seek(to: 0) } }
-                    .help("Previous")
-                iconButton("gobackward.\(skipSecs)", size: 22) { model.skip(-Double(skipSecs)) }.help("Back \(skipSecs) seconds")
-                Button { model.togglePlay(); poke() } label: {
-                    Image(systemName: model.playing ? "pause.fill" : "play.fill").font(.system(size: 22, weight: .bold))
-                        .foregroundColor(.black)
-                        .frame(width: 56, height: 56)
-                        .background(Circle().fill(Color.white))
-                        .contentShape(Circle())
-                }.buttonStyle(.plain).help(model.playing ? "Pause (Space)" : "Play (Space)")
-                iconButton("goforward.\(skipSecs)", size: 22) { model.skip(Double(skipSecs)) }.help("Forward \(skipSecs) seconds")
-                iconButton("forward.end.fill", size: 18) { if let n = nextEp { play(n) } }
-                    .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
-                Spacer()
-                extraButtons
-                iconButton(isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", size: 18) {
-                    toggleFullScreen()
-                }.help(isFullScreen ? "Exit full screen (F)" : "Full screen (F)")
-            }
-            .padding(.top, 4)
-        }
-        .padding(.horizontal, 34).padding(.bottom, 24)
     }
 
     /// Small icon button inside a glass capsule.

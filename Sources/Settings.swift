@@ -201,7 +201,7 @@ struct GeneralSettings: View {
                     Text("Classic").tag("classic")
                 }.pickerStyle(.radioGroup).labelsHidden()
             }
-            PrefNote("Apple TV: full-width banners, glass buttons and an Apple TV-style player. Classic: the original Cove look.")
+            PrefNote("Classic brings back the original Cove look and options.")
         }
         .onChange(of: theme) { CoveApp.applyIcon() }
         PrefSection {
