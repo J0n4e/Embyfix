@@ -434,6 +434,13 @@ final class Emby: ObservableObject {
         return r ?? ItemList(Items: [], TotalRecordCount: 0)
     }
 
+    /// Emby's "Latest" list for a library (what the Emby apps show in their Latest rows).
+    func latest(_ lib: LibPref, limit: Int) async -> [Item] {
+        let r: [Item]? = try? await get("/Users/\(userId)/Items/Latest",
+            ["ParentId": lib.id, "Limit": String(limit), "Fields": "Overview,Genres,EndDate,Status"])
+        return r ?? []
+    }
+
     func genres(_ lib: LibPref) async -> [String] {
         let r: ItemList? = try? await get("/Genres", ["ParentId": lib.id, "UserId": userId, "SortBy": "SortName", "Recursive": "true"])
         return r?.Items.map { $0.Name } ?? []
@@ -450,7 +457,9 @@ final class Emby: ObservableObject {
         let up = await feed(.nextUp, limit: 20).filter { !started.contains($0.id) }
         if !up.isEmpty { rows.append(Row(title: "Up Next", items: up, feed: .nextUp)) }
         for lib in libs where lib.visible && lib.onHome {
-            let items = await libraryItems(lib, limit: 20).Items
+            // "Latest" rows use Emby's own Latest list, like the Emby apps (newest titles, no collections,
+            // new episodes grouped under their show)
+            let items = lib.style == "latest" ? await latest(lib, limit: 20) : await libraryItems(lib, limit: 20).Items
             if !items.isEmpty { rows.append(Row(title: lib.title, items: items, libId: lib.id)) }
         }
         return rows
