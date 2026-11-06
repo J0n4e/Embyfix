@@ -19,13 +19,17 @@ After that, Cove keeps itself up to date. It checks for new releases at launch a
 ## Features
 
 ### Themes (v1.11)
-Settings → General → **Theme**: **Apple TV** (the default) or **Classic** (the original Cove look). The theme changes the home banner, cards, title pages, buttons, sidebar, Back button, player controls and the Dock icon; switching is instant.
+Settings → General → **Theme**:
+- **Glass** (default): full-width banners, frosted glass buttons and bars, Up Next and Recently Added, the new Settings window, media keys and an optional separate player window (details below).
+- **Classic**: the original Cove v1.9.2 screens, options and behaviour, unchanged.
 
-### Apple TV theme
+Switching is instant and swaps the whole app, including the Dock icon.
+
+### Glass theme
 - **Home:** a full-width banner with the title's logo, "TV Show · Comedy · 2011", a short summary, a white **Play** pill and round glass **+** (favorite) and **i** (more info) buttons. Page dots sit at the bottom and arrows appear on hover.
 - **Continue Watching:** wide rounded cards with the title, episode and a "▶ ━ 42m" line.
 - **Show and movie pages:** a full-width backdrop with the logo, genres, rating, a two-line summary with **MORE**, year, length and 4K/HD/CC badges, the Play pill and glass buttons, and "Starring … / Director …" on the right.
-- **Episodes:** a **Season ⌃⌄** menu and a row of Apple TV episode cards ("EPISODE 1", title, summary, "▶ 59m"). Row, grid or list can be chosen next to the heading or in Settings.
+- **Episodes:** a **Season ⌃⌄** menu and a row of large episode cards ("EPISODE 1", title, summary, "▶ 59m"). Row, grid or list can be chosen next to the heading or in Settings.
 - **Player:** big glass back / play-pause / forward circles in the middle; glass groups for picture in picture, full screen and info (top left), volume (top right), and episodes, subtitles, quality, chapters and options (bottom right). The episode and show names sit bottom-left, above a glass scrubber.
 
 ### Browsing

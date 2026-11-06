@@ -162,7 +162,7 @@ struct ClassicGeneralSettings: View {
         ClassicSettingsGroup(title: "Appearance") {
             SettingRow(label: "Theme") {
                 Picker("", selection: $theme) {
-                    Text("Apple TV").tag("apple")
+                    Text("Glass").tag("apple")
                     Text("Classic").tag("classic")
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
                 .onChange(of: theme) { CoveApp.applyIcon() }

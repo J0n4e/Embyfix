@@ -197,7 +197,7 @@ struct GeneralSettings: View {
         PrefSection {
             PrefRow(label: "Theme") {
                 Picker("", selection: $theme) {
-                    Text("Apple TV").tag("apple")
+                    Text("Glass").tag("apple")
                     Text("Classic").tag("classic")
                 }.pickerStyle(.radioGroup).labelsHidden()
             }
