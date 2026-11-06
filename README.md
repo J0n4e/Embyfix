@@ -1,6 +1,6 @@
 # Cove
 
-A Netflix-style native macOS client for [Emby](https://emby.media), written in SwiftUI.
+A Netflix-style native macOS client for [Emby](https://emby.media) and [Jellyfin](https://jellyfin.org), written in SwiftUI.
 
 **[Download the latest release](https://github.com/J0n4e/Embyfix/releases/latest)**: universal app for Apple Silicon and Intel, macOS 14 or later.
 
@@ -18,6 +18,12 @@ After that, Cove keeps itself up to date. It checks for new releases at launch a
 
 ## Features
 
+### Emby and Jellyfin (v1.13)
+- Works with both **Emby** and **Jellyfin** servers. Cove detects which one a server is and talks to each the way it expects.
+- **Add Server** has an optional **Name** field, and saved servers can be renamed in Settings → Servers (click the name). Each server shows whether it is Emby or Jellyfin.
+- **Settings → Libraries → Home → Up Next row** turns the Up Next row on or off.
+- On Jellyfin, automatic intro skipping and progress-bar thumbnails are not available yet.
+
 ### Themes (v1.12)
 Settings → General → **Theme**:
 - **Glass** (default): full-width banners, frosted glass buttons and bars, Up Next and Recently Added, the new Settings window, media keys and an optional separate player window (details below).
@@ -33,7 +39,7 @@ Switching is instant and swaps the whole app, including the Dock icon.
 - **Player:** big glass back / play-pause / forward circles in the middle; glass groups for picture in picture, full screen and info (top left), volume (top right), and episodes, subtitles, quality, chapters and options (bottom right). The episode and show names sit bottom-left, above a glass scrubber.
 
 ### Browsing
-- Sign in to one or more Emby servers (http or https). Saved servers can be switched from the sidebar.
+- Sign in to one or more Emby or Jellyfin servers (http or https). Switch between them in Settings → Servers.
 - Home page with a rotating featured banner (white text with a black outline over the picture), Continue Watching, and rows for each library.
 - **Continue Watching** cards show the title bottom-left, "S3·E3 · 42m left" (or the time left for a movie) top-left and a white progress ring bottom-right. The play button resumes; clicking the card opens the series page on that season (or the movie page).
 - **Navigation:** a sidebar, or a **top bar** under the title bar: EMBYFLIX on the left, a pill with Home, Favorites, Now Playing, your libraries in the middle, search and Settings on the right. Choose it under Settings → General → Appearance → Navigation.
@@ -81,13 +87,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/Cove.app (universal, ad-hoc signed)
-VERSION=v1.12.1 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.14.0 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.12.1`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.14.0`). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
