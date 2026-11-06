@@ -447,8 +447,10 @@ struct LibrariesSettings: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .scrollDisabled(true)
-            .frame(height: CGFloat(max(emby.libs.count, 1)) * 32 + 8)
+            // Up to 6 rows show at once; more libraries scroll inside the table, with a scrollbar
+            .scrollDisabled(emby.libs.count <= 6)
+            .scrollIndicators(emby.libs.count > 6 ? .visible : .hidden)
+            .frame(height: CGFloat(min(max(emby.libs.count, 1), 6)) * 32 + 8)
         }
         .frame(width: 440)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
