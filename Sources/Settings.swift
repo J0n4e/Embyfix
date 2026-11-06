@@ -340,6 +340,9 @@ struct LibraryDefaults {
 struct LibrariesSettings: View {
     @EnvironmentObject var emby: Emby
     @AppStorage("defaultLibraryLayout") private var defaultLayout = "grid"
+    @AppStorage("showFavorites") private var showFavorites = true
+    @AppStorage("showNowPlaying") private var showNowPlaying = true
+    @AppStorage("showRecent") private var showRecent = true
     @AppStorage("posterShowTitle") private var showTitle = true
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
@@ -369,6 +372,16 @@ struct LibrariesSettings: View {
         }
         if let i = emby.libs.firstIndex(where: { $0.id == selectedLib }) ?? (emby.libs.isEmpty ? nil : 0) {
             libraryOptions(i, emby.libs[i])
+        }
+        PrefSection {
+            PrefRow(label: "Sections") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Favorites", isOn: $showFavorites)
+                    Toggle("Now Playing", isOn: $showNowPlaying)
+                    Toggle("Recently Added", isOn: $showRecent)
+                }
+            }
+            PrefNote("Shown in the sidebar and the top bar. Home is always there.")
         }
         PrefSection {
             PrefRow(label: "Poster labels") {

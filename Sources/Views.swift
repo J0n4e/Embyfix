@@ -274,6 +274,10 @@ struct HomeView: View {
     @State private var titleBarH: CGFloat = 0
     @State private var reloadToken = 0
     @AppStorage("navStyle") private var navStyle = "sidebar"   // Settings → General → Appearance: "sidebar" or "topbar"
+    // Settings → Libraries → Sections: which fixed sections the sidebar / top bar show (Home always shows)
+    @AppStorage("showFavorites") private var showFavorites = true
+    @AppStorage("showNowPlaying") private var showNowPlaying = true
+    @AppStorage("showRecent") private var showRecent = true
 
     /// Sidebar row like the Apple TV app: blue icon, white text.
     func sideLabel(_ title: String, _ icon: String) -> some View {
@@ -313,13 +317,19 @@ struct HomeView: View {
         NavigationSplitView {
             List(selection: selB) {
                 sideLabel("Home", "house").modifier(RootTap(id: "home", sel: sel, action: popToRoot)).tag("home")
-                sideLabel("Favorites", "heart").modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
-                sideLabel("Now Playing", "dot.radiowaves.left.and.right")
-                    .modifier(RootTap(id: "nowplaying", sel: sel, action: popToRoot))
-                    .badge(activeCount)
-                    .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
+                if showFavorites {
+                    sideLabel("Favorites", "heart").modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
+                }
+                if showNowPlaying {
+                    sideLabel("Now Playing", "dot.radiowaves.left.and.right")
+                        .modifier(RootTap(id: "nowplaying", sel: sel, action: popToRoot))
+                        .badge(activeCount)
+                        .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
+                }
                 Section("Library") {
-                    sideLabel("Recently Added", "clock").modifier(RootTap(id: "recent", sel: sel, action: popToRoot)).tag("recent")
+                    if showRecent {
+                        sideLabel("Recently Added", "clock").modifier(RootTap(id: "recent", sel: sel, action: popToRoot)).tag("recent")
+                    }
                     ForEach(emby.libs.filter { $0.visible }) { lib in
                         sideLabel(lib.title, icon(lib)).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
                     }
@@ -412,6 +422,10 @@ struct HomeView: View {
             }
         }
         .onChange(of: sel) { path = NavigationPath(); query = "" }
+        .onChange(of: [showFavorites, showNowPlaying, showRecent]) {
+            let hidden = (!showFavorites && sel == "favorites") || (!showNowPlaying && sel == "nowplaying") || (!showRecent && sel == "recent")
+            if hidden { nav.sel = "home" }
+        }
         .onChange(of: emby.openRequest) { _, item in
             guard let item else { return }
             path.append(item)
@@ -471,6 +485,9 @@ struct TopNavBar: View {
 struct TopNavButtons: View {
     @EnvironmentObject var emby: Emby
     @ObservedObject private var nav = NavState.shared
+    @AppStorage("showFavorites") private var showFavorites = true
+    @AppStorage("showNowPlaying") private var showNowPlaying = true
+    @AppStorage("showRecent") private var showRecent = true
     func item(_ title: String, _ id: String, badge: Int = 0) -> some View {
         let on = nav.sel == id
         return Button {
@@ -490,9 +507,9 @@ struct TopNavButtons: View {
     var body: some View {
         HStack(spacing: 4) {
             item("Home", "home")
-            item("Favorites", "favorites")
-            item("Now Playing", "nowplaying", badge: nav.activeCount)
-            item("Recently Added", "recent")
+            if showFavorites { item("Favorites", "favorites") }
+            if showNowPlaying { item("Now Playing", "nowplaying", badge: nav.activeCount) }
+            if showRecent { item("Recently Added", "recent") }
             ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
         }
         .padding(4)
