@@ -343,6 +343,7 @@ struct LibrariesSettings: View {
     @AppStorage("showFavorites") private var showFavorites = true
     @AppStorage("showNowPlaying") private var showNowPlaying = true
     @AppStorage("showRecent") private var showRecent = true
+    @AppStorage("showUpNextRow") private var showUpNextRow = true
     @AppStorage("posterShowTitle") private var showTitle = true
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
@@ -382,6 +383,8 @@ struct LibrariesSettings: View {
                 }
             }
             PrefNote("Shown in the sidebar and the top bar. Home is always there.")
+            PrefRow(label: "Home") { Toggle("Up Next row", isOn: $showUpNextRow) }
+            PrefNote("The next episode of each show you're watching, under Continue Watching.")
         }
         PrefSection {
             PrefRow(label: "Poster labels") {

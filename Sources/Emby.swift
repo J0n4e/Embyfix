@@ -503,7 +503,9 @@ final class Emby: ObservableObject {
            !r.Items.isEmpty { rows.append(Row(title: "Continue Watching", items: r.Items, feed: .resume)) }
         // Up Next (Apple TV): the next episode of each show you're watching, minus ones already in Continue Watching
         let started = Set(rows.first?.items.map { $0.id } ?? [])
-        let up = await feed(.nextUp, limit: 20).filter { !started.contains($0.id) }
+        // Settings → Libraries → Sections → Up Next row (on by default)
+        let showUp = UserDefaults.standard.object(forKey: "showUpNextRow") as? Bool ?? true
+        let up = showUp ? await feed(.nextUp, limit: 20).filter { !started.contains($0.id) } : []
         if !up.isEmpty { rows.append(Row(title: "Up Next", items: up, feed: .nextUp)) }
         for lib in libs where lib.visible && lib.onHome {
             // "Latest" rows use Emby's own Latest list, like the Emby apps (newest titles, no collections,
