@@ -343,6 +343,7 @@ struct LibrariesSettings: View {
     @AppStorage("showFavorites") private var showFavorites = true
     @AppStorage("showNowPlaying") private var showNowPlaying = true
     @AppStorage("showRecent") private var showRecent = true
+    @AppStorage("showUpNextRow") private var showUpNextRow = true
     @AppStorage("posterShowTitle") private var showTitle = true
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
@@ -382,6 +383,8 @@ struct LibrariesSettings: View {
                 }
             }
             PrefNote("Shown in the sidebar and the top bar. Home is always there.")
+            PrefRow(label: "Home") { Toggle("Up Next row", isOn: $showUpNextRow) }
+            PrefNote("The next episode of each show you're watching, under Continue Watching.")
         }
         PrefSection {
             PrefRow(label: "Poster labels") {
@@ -663,8 +666,10 @@ struct ServerSettings: View {
                         HStack(spacing: 12) {
                             Image(systemName: "server.rack").foregroundColor(.secondary).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(srv.name).fontWeight(.semibold)
-                                Text(srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)")
+                                // Click the name to rename it (helps tell servers apart)
+                                TextField("Name", text: Binding(get: { srv.name }, set: { emby.renameServer(srv, $0) }))
+                                    .textFieldStyle(.plain).fontWeight(.semibold).frame(maxWidth: 220)
+                                Text((srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)") + " · " + emby.kindLabel(srv))
                                     .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer(minLength: 12)
@@ -688,7 +693,7 @@ struct ServerSettings: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             PrefRow { Button("Add Server…") { emby.switchServer(); dismiss() } }
-            PrefNote("Connect switches Cove to that server. Add Server opens the sign-in screen.")
+            PrefNote("Click a server's name to rename it. Connect switches Cove to that server. Add Server opens the sign-in screen.")
         }
     }
 }
