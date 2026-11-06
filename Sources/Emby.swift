@@ -836,10 +836,17 @@ func preferredSub(_ streams: [MStream], lang: String) -> Int? {
     return (text ?? subs.first)?.Index
 }
 
-/// Language name from "English (SRT)" etc., so "eng" and "en" tracks group together.
+/// The track's language in English ("Romanian"), so tracks match the language chosen in Settings on both
+/// servers: from the language code when there is one ("ron", "rum", "ro" → Romanian), otherwise from the title
+/// (Emby writes "Romanian (SRT)", Jellyfin "Romanian - SUBRIP - External").
 func subLangName(_ st: MStream) -> String {
+    if let code = st.Language?.trimmingCharacters(in: .whitespaces), !code.isEmpty,
+       let name = Locale(identifier: "en").localizedString(forLanguageCode: code),
+       name.lowercased() != code.lowercased(), !name.lowercased().contains("unknown") {
+        return name
+    }
     let t = st.DisplayTitle ?? st.Language ?? "Unknown"
-    return t.components(separatedBy: " (").first ?? t
+    return (t.components(separatedBy: " (").first ?? t).components(separatedBy: " - ").first ?? t
 }
 
 struct Cue {

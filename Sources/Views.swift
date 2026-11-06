@@ -1040,6 +1040,8 @@ struct Hero: View {
     let items: [Item]
     @State private var index = 0
     @State private var hover = false
+    @State private var width: CGFloat = 1200
+    var bannerH: CGFloat { min(max(width * 9 / 16, 460), 900) }
 
     /// "TV Show · Comedy · Sport", like Apple TV.
     func meta(_ item: Item) -> String {
@@ -1057,9 +1059,10 @@ struct Hero: View {
         ZStack(alignment: .bottomLeading) {
             // The banner takes the picture's own shape (16:9), so the whole backdrop shows instead of a cropped
             // strip; it never gets shorter than 460 pt (narrow windows) or taller than 860 pt (very wide ones)
-            Color.clear.frame(maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
-                .frame(minHeight: 460, maxHeight: 860)
-                .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
+            // Full window width always; height follows the picture's 16:9 shape (460–900 pt). On very wide
+            // windows the picture fills the width and is trimmed a little at top and bottom, never side gaps.
+            Color.clear.frame(maxWidth: .infinity).frame(height: bannerH)
+                .overlay { Backdrop(id: item.backdropId ?? item.Id, width: 3840) }.clipped()
                 .id("b" + item.id).transition(.opacity)
             // Dark fade on the left and at the bottom, so the text reads and the page flows into the rows
             LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .init(x: 0.6, y: 0.5))
@@ -1126,6 +1129,9 @@ struct Hero: View {
         }
         .onHover { hover = $0 }
         .clipped()
+        .background(GeometryReader { g in
+            Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { _, w in width = w }
+        })
         .foregroundColor(.white)
         .task(id: index) {
             try? await Task.sleep(nanoseconds: 9_000_000_000)
@@ -1293,8 +1299,9 @@ struct FeedView: View {
 struct Backdrop: View {
     @EnvironmentObject var emby: Emby
     let id: String
+    var width: Int = 1600   // banners ask for up to 4K so they stay sharp on large / Retina screens
     var body: some View {
-        AsyncImage(url: emby.image(id, "Backdrop", width: 1600)) { p in
+        AsyncImage(url: emby.image(id, "Backdrop", width: width)) { p in
             p.resizable().aspectRatio(contentMode: .fill)
         } placeholder: { Color(white: 0.1) }
     }
@@ -2332,10 +2339,7 @@ struct DetailView: View {
     }
 
     /// Language name from "English (SRT)" etc., so "eng" and "en" tracks group together.
-    static func langName(_ st: MStream) -> String {
-        let t = st.DisplayTitle ?? st.Language ?? "Unknown"
-        return t.components(separatedBy: " (").first ?? t
-    }
+    static func langName(_ st: MStream) -> String { subLangName(st) }   // same rule as "Always load…"
 
     /// Subtitle languages found in an item, keyed by language code.
     static func subLangs(_ f: Full?) -> [(code: String, name: String)] {
