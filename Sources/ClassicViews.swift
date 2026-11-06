@@ -346,10 +346,16 @@ struct ClassicHomeView: View {
 
     /// Top bar layout: a navigation row under the title bar (see ClassicTopNavBar), with the page area below it.
     var topLayout: some View {
-        VStack(spacing: 0) {
-            // In front of the page, so nothing on a page can cover its buttons. Back sits in the bar on pushed pages.
-            ClassicTopNavBar(back: path.isEmpty ? nil : { path.removeLast() }).zIndex(1)
-            detailPane(withSearch: false).clipped()
+        // Both the bar and the page are held to the window's width: a page that grew wider than the window
+        // (e.g. Favorites) made the bar wider too, pushing its pill off screen where it couldn't be clicked.
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // In front of the page, so nothing on a page can cover its buttons. Back sits in the bar on pushed pages.
+                ClassicTopNavBar(back: path.isEmpty ? nil : { path.removeLast() })
+                    .frame(width: geo.size.width).zIndex(1)
+                detailPane(withSearch: false)
+                    .frame(width: geo.size.width).clipped()
+            }
         }.background(bg)
     }
 
