@@ -1,5 +1,6 @@
 import IOKit.pwr_mgt
 import SwiftUI
+import MediaPlayer
 import AVKit
 
 // MARK: - Theme
@@ -33,22 +34,34 @@ struct OnAccent: ViewModifier {
     func body(content: Content) -> some View { content.foregroundColor(Theme.onAccent(name)) }
 }
 
+/// Apple TV glass: dark see-through fill, blur and a thin light outline (same as the round Back button).
+struct GlassCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(Capsule().fill(Color.black.opacity(0.4)))
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+    }
+}
+extension View { func glassCapsule() -> some View { modifier(GlassCapsule()) } }
+
+/// Toolbar button in Apple TV glass; `active` (a filter in use) gets a lighter fill.
 struct PillStyle: ViewModifier {
-    @AppStorage("accent") private var name = "red"
     let active: Bool
     func body(content: Content) -> some View {
         content.font(.callout.weight(.medium))
-            .foregroundColor(active ? Theme.onAccent(name) : nil)
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(active ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.1)))
-            .clipShape(Capsule())
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 16).frame(height: 36)
+            .background(Capsule().fill(Color.white.opacity(active ? 0.22 : 0)))
+            .glassCapsule()
+            .contentShape(Capsule())
     }
 }
 
 extension View {
     /// Thin white outline that follows the rounded corners (posters, episode thumbnails, preview card).
     func thinBorder(_ radius: CGFloat) -> some View {
-        overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(0.85), lineWidth: 1))
+        overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(0.12), lineWidth: 1))
     }
     func pill(active: Bool = false) -> some View { modifier(PillStyle(active: active)) }
     func onAccent() -> some View { modifier(OnAccent()) }
@@ -75,21 +88,33 @@ func parseDate(_ s: String?) -> Date? {
 struct RootView: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.appBG) var bg
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+    @AppStorage("separatePlayer") private var separatePlayer = false
     var body: some View {
+        let inline = !separatePlayer
         ZStack {
-            // Hide (but keep) the screen under the player: AppKit controls such as spinners
+            // Hide (but keep) the screen under an in-window player: AppKit controls such as spinners
             // otherwise draw on top of the video.
             Group { if emby.loggedIn { HomeView() } else { LoginView() } }
-                .opacity(emby.playing == nil ? 1 : 0)
-                .allowsHitTesting(emby.playing == nil)
+                .opacity(inline && emby.playing != nil ? 0 : 1)
+                .allowsHitTesting(!(inline && emby.playing != nil))
             HoverCardLayer()
-            if let req = emby.playing {
+            if inline, let req = emby.playing {
                 PlayerView(req: req).id(req.id).zIndex(10)
             }
         }
+        // Settings → Playback → "Open videos in a separate window" (Apple TV style): open it when something
+        // starts, close it when it stops
         .onChange(of: emby.playing?.id) { _, id in
             PlaybackFlag.shared.active = id != nil
             if id != nil { HoverCardCenter.shared.hide() }
+            guard separatePlayer else { return }
+            if id != nil { openWindow(id: "player") } else { dismissWindow(id: "player") }
+        }
+        // Switching the setting while a video plays: stop it cleanly (it would otherwise be left without a player)
+        .onChange(of: separatePlayer) { _, _ in
+            if emby.playing != nil { emby.playing = nil; dismissWindow(id: "player") }
         }
     }
 }
@@ -122,7 +147,7 @@ struct LoginView: View {
     var serverList: some View {
         VStack(spacing: 14) {
             Text("Select Server").font(.title.bold()).padding(.bottom, 6)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
                 ForEach(emby.servers) { s in serverCard(s) }
                 Button { startAdd() } label: {
                     VStack(spacing: 10) {
@@ -249,6 +274,19 @@ struct HomeView: View {
     @State private var titleBarH: CGFloat = 0
     @State private var reloadToken = 0
     @AppStorage("navStyle") private var navStyle = "sidebar"   // Settings → General → Appearance: "sidebar" or "topbar"
+    // Settings → Libraries → Sections: which fixed sections the sidebar / top bar show (Home always shows)
+    @AppStorage("showFavorites") private var showFavorites = true
+    @AppStorage("showNowPlaying") private var showNowPlaying = true
+    @AppStorage("showRecent") private var showRecent = true
+
+    /// Sidebar row like the Apple TV app: blue icon, white text.
+    func sideLabel(_ title: String, _ icon: String) -> some View {
+        Label {
+            Text(title).foregroundColor(.white)
+        } icon: {
+            Image(systemName: icon).foregroundColor(Color(red: 0.24, green: 0.56, blue: 1))
+        }.font(.system(size: 15))
+    }
 
     func icon(_ lib: LibPref) -> String {
         switch lib.kind {
@@ -278,51 +316,44 @@ struct HomeView: View {
     var splitLayout: some View {
         NavigationSplitView {
             List(selection: selB) {
-                Label("Home", systemImage: "house.fill").foregroundStyle(.tint).modifier(RootTap(id: "home", sel: sel, action: popToRoot)).tag("home")
-                Label("Favorites", systemImage: "heart.fill").foregroundStyle(.tint).modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
-                Label("Now Playing", systemImage: "dot.radiowaves.left.and.right")
-                    .foregroundStyle(.tint)
-                    .modifier(RootTap(id: "nowplaying", sel: sel, action: popToRoot))
-                    .badge(activeCount)
-                    .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
-                Section("My Media") {
+                sideLabel("Home", "house").modifier(RootTap(id: "home", sel: sel, action: popToRoot)).tag("home")
+                if showFavorites {
+                    sideLabel("Favorites", "heart").modifier(RootTap(id: "favorites", sel: sel, action: popToRoot)).tag("favorites")
+                }
+                if showNowPlaying {
+                    sideLabel("Now Playing", "dot.radiowaves.left.and.right")
+                        .modifier(RootTap(id: "nowplaying", sel: sel, action: popToRoot))
+                        .badge(activeCount)
+                        .tag("nowplaying")   // tag last, or the badge hides it and the row can't be selected
+                }
+                Section("Library") {
+                    if showRecent {
+                        sideLabel("Recently Added", "clock").modifier(RootTap(id: "recent", sel: sel, action: popToRoot)).tag("recent")
+                    }
                     ForEach(emby.libs.filter { $0.visible }) { lib in
-                        Label(lib.title, systemImage: icon(lib)).foregroundStyle(.tint).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
+                        sideLabel(lib.title, icon(lib)).modifier(RootTap(id: lib.id, sel: sel, action: popToRoot)).tag(lib.id)
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
+            .environment(\.defaultMinListRowHeight, 34)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 290)
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading, spacing: 14) {
-                    Button { emby.switchServer() } label: {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(emby.currentServerName).font(.callout.weight(.semibold)).lineLimit(1)
-                                Text(emby.currentServer?.user.isEmpty == false ? emby.currentServer!.user : (URL(string: emby.server)?.host ?? ""))
-                                    .font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundColor(.secondary)
+                    // Search sits in the sidebar, as in the Apple TV app
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundColor(.secondary)
+                        TextField("Search", text: queryB).textFieldStyle(.plain)
+                        if !query.isEmpty {
+                            Button { query = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                            }.buttonStyle(.plain)
                         }
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        .background(Color.white.opacity(0.05))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 1))
-                        .cornerRadius(8).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .help("Connected to \(emby.server) — click to switch server")
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color.white.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
-            }
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 12) {
-                    Button { nav.showSettings = true } label: {
-                        Label("Settings", systemImage: "gearshape").font(.callout)
-                            .padding(.horizontal, 8).padding(.vertical, 8).contentShape(Rectangle())
-                    }
-                    .help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
-                    Spacer()
-                }.buttonStyle(.plain).padding(10)
             }
             // Sidebar in the chosen background color instead of the system gray. The color stops below the
             // title bar, so the strip behind the window buttons keeps the same gray as the rest of the title bar.
@@ -334,7 +365,7 @@ struct HomeView: View {
                     .frame(height: titleBarH).offset(y: -titleBarH).allowsHitTesting(false)
             }
         } detail: {
-            detailPane(withSearch: true)
+            detailPane(withSearch: false)
         }
     }
 
@@ -348,15 +379,18 @@ struct HomeView: View {
                     else if sel == "home" { HomeContent(reloadToken: reloadToken) }
                     else if sel == "favorites" { FavoritesView() }
                     else if sel == "nowplaying" { NowPlayingView() }
+                    else if sel == "recent" { FeedView(feed: .recent, root: true) }
                     else if let lib = emby.libs.first(where: { $0.id == sel }) { LibraryView(lib: lib).id(lib.id) }
                     else { Color.black }
                 }
                 .navigationDestination(for: Item.self) { DetailView(item: $0) }
                 .navigationDestination(for: PersonRef.self) { PersonView(person: $0) }
+                .navigationDestination(for: Feed.self) { FeedView(feed: $0) }
             }
             // Back button in the title bar, left of the window title, on every page
             .toolbar { TitleBarItems(back: nil) }   // top-level pages: no Back (pushed pages add their own)
             .hideToolbarTitle()
+            .toolbarBackground(.hidden, for: .windowToolbar)
         }
     }
 
@@ -388,6 +422,10 @@ struct HomeView: View {
             }
         }
         .onChange(of: sel) { path = NavigationPath(); query = "" }
+        .onChange(of: [showFavorites, showNowPlaying, showRecent]) {
+            let hidden = (!showFavorites && sel == "favorites") || (!showNowPlaying && sel == "nowplaying") || (!showRecent && sel == "recent")
+            if hidden { nav.sel = "home" }
+        }
         .onChange(of: emby.openRequest) { _, item in
             guard let item else { return }
             path.append(item)
@@ -438,8 +476,8 @@ struct TopNavBar: View {
             TopNavTools().fixedSize()
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .frame(height: 36)
-        .padding(.horizontal, 28).padding(.vertical, 12)
+        .frame(height: 40)
+        .padding(.horizontal, 28).padding(.vertical, 10)
         .background(bg)
     }
 }
@@ -447,6 +485,9 @@ struct TopNavBar: View {
 struct TopNavButtons: View {
     @EnvironmentObject var emby: Emby
     @ObservedObject private var nav = NavState.shared
+    @AppStorage("showFavorites") private var showFavorites = true
+    @AppStorage("showNowPlaying") private var showNowPlaying = true
+    @AppStorage("showRecent") private var showRecent = true
     func item(_ title: String, _ id: String, badge: Int = 0) -> some View {
         let on = nav.sel == id
         return Button {
@@ -456,8 +497,8 @@ struct TopNavButtons: View {
             Text(badge > 0 ? "\(title) \(badge)" : title)
                 .font(.callout.weight(on ? .semibold : .regular))
                 .foregroundColor(on ? .white : .secondary)
-                .padding(.horizontal, 18).padding(.vertical, 6)
-                .background(Capsule().fill(on ? Color.white.opacity(0.28) : Color.clear))
+                .padding(.horizontal, 18).frame(height: 32)
+                .background(Capsule().fill(on ? Color.white.opacity(0.22) : Color.clear))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -466,12 +507,16 @@ struct TopNavButtons: View {
     var body: some View {
         HStack(spacing: 4) {
             item("Home", "home")
-            item("Favorites", "favorites")
-            item("Now Playing", "nowplaying", badge: nav.activeCount)
+            if showFavorites { item("Favorites", "favorites") }
+            if showNowPlaying { item("Now Playing", "nowplaying", badge: nav.activeCount) }
+            if showRecent { item("Recently Added", "recent") }
             ForEach(emby.libs.filter { $0.visible }) { lib in item(lib.title, lib.id) }
         }
         .padding(4)
-        .background(Capsule().fill(Color.white.opacity(0.1)))
+        .frame(height: 40)
+        .background(Capsule().fill(Color.black.opacity(0.4)))
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 }
 
@@ -491,11 +536,13 @@ struct TopNavTools: View {
                 .background(Color.white.opacity(0.1)).clipShape(Capsule())
             }
             Button { nav.searchOpen.toggle(); if !nav.searchOpen { nav.query = "" } } label: {
-                Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .semibold)).padding(6).contentShape(Rectangle())
+                Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .semibold))
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color.black.opacity(0.4)))
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                    .contentShape(Circle())
             }.buttonStyle(.plain).help("Search")
-            Button { nav.showSettings = true } label: {
-                Image(systemName: "gearshape.fill").font(.system(size: 14)).padding(6).contentShape(Rectangle())
-            }.buttonStyle(.plain).help("Settings (⌘,)").keyboardShortcut(",", modifiers: .command)
         }
     }
 }
@@ -514,15 +561,14 @@ struct TopBackButton: View {
     @State private var hover = false
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left").font(.system(size: 13, weight: .bold))
-                Text("Back").font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            .background(Capsule().fill(Color.white.opacity(hover ? 0.28 : 0.18)))
-            .overlay(Capsule().stroke(Color.white.opacity(0.5), lineWidth: 1))
-            .contentShape(Capsule())
+            // Apple TV style: a round glass ‹ button
+            Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color.black.opacity(hover ? 0.55 : 0.4)))
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -569,7 +615,7 @@ struct SearchView: View {
                 Text("Results for “\(query)”").font(.title2.bold())
                 if !people.isEmpty { peopleRow }
                 if !people.isEmpty && !results.isEmpty { Text("Titles").font(.title3.bold()).padding(.top, 8) }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 18) {
                     ForEach(results) { PosterCard(item: $0) }
                 }
                 if busy { Spinner() }
@@ -665,7 +711,7 @@ struct FavoritesView: View {
                     Image(systemName: "chevron.right").font(.system(size: 15, weight: .bold)).foregroundColor(.secondary)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).help("Show all")
-            ArrowScrollRow(ids: list.map(\.Id), itemWidth: 150, spacing: 16, inset: 0) { id in
+            ArrowScrollRow(ids: list.map(\.Id), itemWidth: 170, spacing: 16, inset: 0) { id in
                 if let it = byId[id] { PosterCard(item: it) }
             }
         }
@@ -685,7 +731,7 @@ struct FavoriteGridView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title).font(.title.bold())
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], alignment: .leading, spacing: 22) {
                     ForEach(items.filter { emby.isFav($0) }) { PosterCard(item: $0) }
                 }
             }.padding(.horizontal, 32).padding(.vertical, 24)
@@ -695,6 +741,7 @@ struct FavoriteGridView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar { TitleBarItems(back: { dismiss() }) }
         .hideToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
             let all = await emby.favorites()
             let set = Set(ids)
@@ -849,6 +896,7 @@ struct PersonView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar { TitleBarItems(back: { dismiss() }) }
         .hideToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
             async let list = emby.itemsWithPerson(person.id)
             async let me = emby.person(person.id)
@@ -883,7 +931,7 @@ struct PersonView: View {
     func section(_ title: String, _ list: [Item]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("\(title) (\(list.count))").font(.title3.bold())
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], alignment: .leading, spacing: 22) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], alignment: .leading, spacing: 22) {
                 ForEach(list) { PosterCard(item: $0) }
             }
         }
@@ -894,6 +942,22 @@ struct PersonView: View {
 
 struct HomeContent: View {
     @EnvironmentObject var emby: Emby
+    @ObservedObject private var nav = NavState.shared
+
+    /// "Title ›" like Apple TV: opens the full list (feed page) or the library.
+    @ViewBuilder func rowTitle(_ row: Row) -> some View {
+        let label = HStack(spacing: 6) {
+            Text(row.title).font(.system(size: 22, weight: .bold))
+            Image(systemName: "chevron.right").font(.system(size: 17, weight: .bold)).foregroundColor(.secondary)
+        }.contentShape(Rectangle())
+        if let f = row.feed {
+            NavigationLink(value: f) { label }.buttonStyle(.plain).help("Show all")
+        } else if let id = row.libId {
+            Button { nav.sel = id } label: { label }.buttonStyle(.plain).help("Open \(row.title)")
+        } else {
+            Text(row.title).font(.system(size: 22, weight: .bold))
+        }
+    }
     @Environment(\.appBG) var bg
     let reloadToken: Int
     @State private var rows: [Row] = []
@@ -913,17 +977,17 @@ struct HomeContent: View {
     var body: some View {
         let hero = heroItems
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 30) {
                 if !hero.isEmpty { Hero(items: hero) }
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(row.title).font(.title3.bold()).padding(.leading, 32)
-                        if row.title == "Continue Watching" {
-                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 260, spacing: 14, inset: 32) {
+                        rowTitle(row).padding(.leading, 52)
+                        if row.feed == .resume || row.feed == .nextUp {
+                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 340, spacing: 22, inset: 52) {
                                 ResumeCard(item: row.items[$0])
                             }
                         } else {
-                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 150, spacing: 14, inset: 32) {
+                            ArrowScrollRow(ids: Array(row.items.indices), itemWidth: 170, spacing: 22, inset: 52) {
                                 PosterCard(item: row.items[$0])
                             }
                         }
@@ -932,6 +996,7 @@ struct HomeContent: View {
                 if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
             }.padding(.bottom, 40)
         }
+        .ignoresSafeArea(edges: .top)          // banner runs up under the title bar, as in Apple TV
         .background(bg)
         .task(id: reloadToken) { rows = await emby.loadHome(); loading = false }
     }
@@ -948,78 +1013,129 @@ extension View {
 
 struct Hero: View {
     @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
     let items: [Item]
     @State private var index = 0
+    @State private var hover = false
 
-    func meta(_ item: Item) -> [String] {
-        var m: [String] = []
-        if let y = item.ProductionYear { m.append(String(y)) }
-        if let t = item.RunTimeTicks, t > 0 { m.append(runtimeText(t)) }
-        if let g = item.Genres?.first { m.append(g) }
-        return m
+    /// "TV Show · Comedy · Sport", like Apple TV.
+    func meta(_ item: Item) -> String {
+        var m: [String] = [item.isEpisode || item.isSeries ? "TV Show" : "Movie"]
+        m += (item.Genres ?? []).prefix(2)
+        return m.joined(separator: " · ")
+    }
+
+    func step(_ d: Int) {
+        withAnimation(.easeInOut(duration: 0.6)) { index = (index + d + items.count) % items.count }
     }
 
     var body: some View {
         let item = items[index % items.count]
         ZStack(alignment: .bottomLeading) {
-            Color.clear.frame(maxWidth: .infinity).frame(height: 440)
+            Color.clear.frame(maxWidth: .infinity).frame(height: 560)
                 .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
                 .id("b" + item.id).transition(.opacity)
-            VStack(alignment: .leading, spacing: 14) {
-                Text(item.heroTitle).font(.system(size: 52, weight: .black)).lineLimit(2).blackOutline(2)
-                if item.SeriesName != nil {
-                    Text("S\(item.ParentIndexNumber ?? 0)·E\(item.IndexNumber ?? 0)  \(item.Name)")
-                        .font(.headline).foregroundColor(.white).blackOutline()
+            // Dark fade on the left and at the bottom, so the text reads and the page flows into the rows
+            LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .init(x: 0.6, y: 0.5))
+            LinearGradient(colors: [.clear, .clear, bg.opacity(0.6), bg], startPoint: .top, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 12) {
+                if item.isEpisode {
+                    Text("S\(item.ParentIndexNumber ?? 0), E\(item.IndexNumber ?? 0)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.55)))
                 }
-                HStack(spacing: 12) {
-                    ForEach(meta(item), id: \.self) { Text($0) }
+                TitleLogo(item: item, height: 90, font: 54)
+                HStack(spacing: 8) {
+                    Text(meta(item))
+                    if let y = item.ProductionYear { Text("· \(String(y))") }
                     if let r = item.CommunityRating {
                         HStack(spacing: 3) { Image(systemName: "star.fill"); Text(String(format: "%.1f", r)) }
-                            .foregroundColor(.yellow)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.7)))
+                            .font(.system(size: 12, weight: .semibold))
                     }
-                }.font(.subheadline).foregroundColor(.white).blackOutline()
-                Text(item.Overview ?? "").font(.body).lineLimit(3).frame(maxWidth: 620, alignment: .leading)
-                    .foregroundColor(.white).blackOutline()
-                HStack(spacing: 12) {
+                }.font(.system(size: 16, weight: .medium))
+                Text(item.Overview ?? "").font(.system(size: 15)).lineLimit(3)
+                    .foregroundColor(.white.opacity(0.8)).frame(maxWidth: 420, alignment: .leading)
+                HStack(spacing: 14) {
                     Button { Task { await emby.play(item) } } label: {
-                        Label("Play", systemImage: "play.fill").font(.system(size: 16, weight: .bold))
-                            .padding(.horizontal, 26).frame(height: 44)
-                            .background(.white).foregroundColor(.black).cornerRadius(6)
+                        Label(emby.resumeAt(item) > 0 ? "Resume" : "Play", systemImage: "play.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 170, height: 46)
+                            .background(Capsule().fill(.white)).foregroundColor(.black)
                     }.buttonStyle(.plain)
+                    let fav = emby.isFav(item)
+                    Button { Task { await emby.setFav(item.id, !fav) } } label: {
+                        Image(systemName: fav ? "checkmark" : "plus").font(.system(size: 18, weight: .semibold))
+                            .frame(width: 46, height: 46).background(.ultraThinMaterial, in: Circle())
+                    }.buttonStyle(.plain).help(fav ? "Remove from Favorites" : "Add to Favorites")
                     NavigationLink(value: item) {
-                        Label("More Info", systemImage: "info.circle").font(.system(size: 16, weight: .bold))
-                            .padding(.horizontal, 22).frame(height: 44)
-                            .background(Color.gray.opacity(0.55)).foregroundColor(.white).cornerRadius(6)
-                    }.buttonStyle(.plain)
-                    Spacer()
-                    HStack(spacing: 6) {
-                        ForEach(items.indices, id: \.self) { i in
-                            let on = i == index % items.count
-                            Capsule().fill(on ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.4)))
-                                .frame(width: on ? 22 : 8, height: 4)
-                                .overlay(Capsule().stroke(Color.black, lineWidth: 1))
-                                .shadow(color: .black.opacity(0.7), radius: 3)
-                                .contentShape(Rectangle().inset(by: -6))
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.8)) { index = i } }
-                        }
-                    }
-                }
+                        Image(systemName: "info").font(.system(size: 18, weight: .semibold))
+                            .frame(width: 46, height: 46).background(.ultraThinMaterial, in: Circle())
+                    }.buttonStyle(.plain).help("More info")
+                }.padding(.top, 8)
             }
-            .padding(.horizontal, 44).padding(.vertical, 36)
+            .padding(.leading, 52).padding(.bottom, 64)
             .frame(maxWidth: .infinity, alignment: .leading)
             .id("t" + item.id).transition(.opacity)
+            // Page dots, centered at the bottom
+            HStack(spacing: 9) {
+                ForEach(items.indices, id: \.self) { i in
+                    Circle().fill(Color.white.opacity(i == index % items.count ? 1 : 0.4)).frame(width: 7, height: 7)
+                        .contentShape(Rectangle().inset(by: -5))
+                        .onTapGesture { withAnimation(.easeInOut(duration: 0.6)) { index = i } }
+                }
+            }
+            .frame(maxWidth: .infinity).padding(.bottom, 26)
         }
-        .frame(height: 440)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 32)
-        .foregroundColor(.white)
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
-                if Task.isCancelled { break }
-                withAnimation(.easeInOut(duration: 1.0)) { index += 1 }
+        .frame(height: 560)
+        .overlay {
+            if hover && items.count > 1 {
+                HStack {
+                    heroArrow("chevron.left") { step(-1) }
+                    Spacer()
+                    heroArrow("chevron.right") { step(1) }
+                }.padding(.horizontal, 14)
             }
         }
+        .onHover { hover = $0 }
+        .clipped()
+        .foregroundColor(.white)
+        .task(id: index) {
+            try? await Task.sleep(nanoseconds: 9_000_000_000)
+            if !Task.isCancelled { step(1) }
+        }
+    }
+
+    func heroArrow(_ name: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name).font(.system(size: 30, weight: .light))
+                .frame(width: 44, height: 80).contentShape(Rectangle())
+                .shadow(color: .black.opacity(0.6), radius: 4)
+        }.buttonStyle(.plain)
+    }
+}
+
+/// The title's logo image from Emby (Apple TV style); falls back to big bold text when there is none.
+struct TitleLogo: View {
+    @EnvironmentObject var emby: Emby
+    let item: Item
+    var height: CGFloat = 90
+    var font: CGFloat = 54
+    var body: some View {
+        AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 700)) { phase in
+            if let img = phase.image {
+                img.resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 420, maxHeight: height, alignment: .bottomLeading)
+                    .shadow(color: .black.opacity(0.5), radius: 8)
+            } else {
+                Text(item.heroTitle).font(.system(size: font, weight: .heavy)).lineLimit(2)
+                    .minimumScaleFactor(0.6).frame(maxWidth: 620, alignment: .leading)
+                    .shadow(color: .black.opacity(0.5), radius: 8)
+            }
+        }
+        .frame(minHeight: 40, alignment: .bottomLeading)
     }
 }
 
@@ -1055,56 +1171,97 @@ struct ResumeCard: View {
         item.isEpisode ? emby.image(item.Id, width: 520, plain: true) : emby.image(item.backdropId ?? item.Id, "Backdrop", width: 520)
     }
 
+    /// "42m" (time left), as on Apple TV's cards.
+    var leftShort: String? {
+        guard let total = item.RunTimeTicks, total > 0 else { return nil }
+        return runtimeText(max(0, total - (item.UserData?.PlaybackPositionTicks ?? 0)))
+    }
+
     var body: some View {
-        Group {
-            VStack(alignment: .leading, spacing: 6) {
-                AsyncImage(url: imageURL) { p in
-                    p.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
-                }
-                .frame(width: 260, height: 146).clipped()
-                // Title, bottom-left
-                .overlay(alignment: .bottomLeading) {
-                    Text(item.heroTitle)
-                        .font(.callout.weight(.semibold)).foregroundColor(.white).lineLimit(1)
-                        .shadow(color: .black.opacity(0.8), radius: 3)
-                        .padding(.leading, 10).padding(.trailing, 40).padding(.top, 28).padding(.bottom, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                }
-                // Series info (S3·E3 · 42m left), top-left
-                .overlay(alignment: .topLeading) {
-                    if let subtitle {
-                        Text(subtitle).font(.caption2.weight(.semibold)).foregroundColor(.white)
-                            .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(Capsule().fill(Color.black.opacity(0.35)))
-                            .padding(8)
-                    }
-                }
-                // White progress ring, bottom-right
-                .overlay(alignment: .bottomTrailing) {
-                    if progress > 0 && progress < 1 { ProgressRing(progress: progress).padding(.trailing, 10).padding(.bottom, 10) }
-                }
-                // Play button: resumes playback; clicking anywhere else on the card opens the page
-                .overlay {
-                    if hover {
-                        Button { Task { await emby.play(item) } } label: {
-                            Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundColor(.white)
-                                .shadow(radius: 6)
-                        }.buttonStyle(.plain).help("Resume")
-                    }
-                }
-                .cornerRadius(8)
-                .thinBorder(8)
-                .hoverLift()
-            }
-            .frame(width: 260, alignment: .leading)
-            .contentShape(Rectangle())
-            .onHover { hover = $0 }
-            .onTapGesture { openPage() }
-            .help(item.isEpisode ? "\(item.heroTitle) — \(item.Name)" : item.Name)
+        AsyncImage(url: imageURL) { p in
+            p.resizable().aspectRatio(contentMode: .fill)
+        } placeholder: {
+            ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
         }
+        .frame(width: 340, height: 191).clipped()
+        .overlay(alignment: .bottomLeading) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.heroTitle).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                if item.isEpisode {
+                    Text("S\(item.ParentIndexNumber ?? 0), E\(item.IndexNumber ?? 0) · \(item.Name)")
+                        .font(.system(size: 12)).foregroundColor(.white.opacity(0.75)).lineLimit(1)
+                }
+                // Apple TV's bottom line: ▶ short progress bar, time left
+                HStack(spacing: 8) {
+                    Image(systemName: "play.fill").font(.system(size: 11))
+                    if progress > 0 && progress < 1 {
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.35))
+                            Capsule().fill(Color.white).frame(width: 34 * progress)
+                        }.frame(width: 34, height: 4)
+                    }
+                    if let l = leftShort { Text(l).font(.system(size: 13, weight: .medium)) }
+                    Spacer()
+                }
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 14).padding(.top, 36).padding(.bottom, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+        }
+        .overlay {
+            if hover {
+                Button { Task { await emby.play(item) } } label: {
+                    Image(systemName: "play.fill").font(.system(size: 22)).foregroundColor(.white)
+                        .frame(width: 54, height: 54).background(.ultraThinMaterial, in: Circle())
+                }.buttonStyle(.plain).help("Resume")
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .thinBorder(12)
+        .hoverLift()
+        .frame(width: 340, alignment: .leading)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture { openPage() }
+        .help(item.isEpisode ? "\(item.heroTitle) — \(item.Name)" : item.Name)
+    }
+}
+
+/// Full page for Continue Watching, Up Next or Recently Added.
+struct FeedView: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.appBG) var bg
+    @Environment(\.dismiss) var dismiss
+    let feed: Feed
+    var root = false
+    @State private var items: [Item] = []
+    @State private var loading = true
+    var landscape: Bool { feed != .recent }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(feed.rawValue).font(.system(size: 30, weight: .bold))
+                if loading { Spinner().frame(maxWidth: .infinity).padding(60) }
+                else if items.isEmpty { Text("Nothing here yet.").foregroundColor(.secondary) }
+                if landscape {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 22)], alignment: .leading, spacing: 22) {
+                        ForEach(items) { ResumeCard(item: $0) }
+                    }
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], alignment: .leading, spacing: 22) {
+                        ForEach(items) { PosterCard(item: $0) }
+                    }
+                }
+            }
+            .padding(.horizontal, 52).padding(.vertical, 24)
+        }
+        .background(bg)
+        .task { items = await emby.feed(feed); loading = false }
+        .navigationBarBackButtonHidden(true)
+        .toolbar { TitleBarItems(back: root ? nil : { dismiss() }) }
+        .hideToolbarTitle()
     }
 }
 
@@ -1127,7 +1284,6 @@ struct PosterCard: View {
     @AppStorage("posterShowYear") private var showYear = true
     @AppStorage("posterLabelAlign") private var labelAlign = "center"
     var centered: Bool { labelAlign == "center" }
-    @State private var ptr = PointerBox()    // pointer position on the poster (read lazily, no redraws)
     var body: some View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
@@ -1138,7 +1294,7 @@ struct PosterCard: View {
                     } placeholder: {
                         ZStack { Color(white: 0.15); Text(item.Name).font(.caption).padding(6) }
                     }
-                    .frame(width: 150, height: 225).clipped()
+                    .frame(width: 170, height: 255).clipped()
                     .opacity(played ? 0.6 : 1)
                     WatchBadge(item: item, played: played).padding(8)
                 }
@@ -1153,29 +1309,8 @@ struct PosterCard: View {
                         ProgressView(value: pct / 100).padding(.horizontal, 8).padding(.bottom, 8)
                     }
                 }
-                .cornerRadius(8)
-                .thinBorder(8)
-                // The Netflix-style preview card is drawn by HoverCardLayer (window level), centered on this poster.
-                // Local + global pointer positions together give the poster's place in the window.
-                .onContinuousHover(coordinateSpace: .local) { phase in
-                    if case .active(let p) = phase { ptr.local = p }
-                }
-                .onContinuousHover(coordinateSpace: .global) { phase in
-                    switch phase {
-                    case .active(let p):
-                        ptr.global = p
-                        if !ptr.inside {
-                            ptr.inside = true
-                            let box = ptr
-                            HoverCardCenter.shared.posterHover(item, inside: true) {
-                                CGRect(x: box.global.x - box.local.x, y: box.global.y - box.local.y, width: 150, height: 225)
-                            }
-                        }
-                    case .ended:
-                        ptr.inside = false
-                        HoverCardCenter.shared.posterHover(item, inside: false) { .zero }
-                    }
-                }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .thinBorder(12)
                 .modifier(HoverLift(hover: hover))
                 if showTitle || showYear {
                     VStack(alignment: centered ? .center : .leading, spacing: 2) {
@@ -1183,10 +1318,10 @@ struct PosterCard: View {
                         if showYear { Text(item.yearText).font(.caption).foregroundColor(.secondary) }
                     }
                     .multilineTextAlignment(centered ? .center : .leading)
-                    .frame(width: 150, alignment: centered ? .center : .leading)
+                    .frame(width: 170, alignment: centered ? .center : .leading)
                 }
             }
-            .frame(width: 150, alignment: .leading)
+            .frame(width: 170, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { hover = $0 }
             .zIndex(hover ? 1 : 0)
@@ -1314,7 +1449,7 @@ struct HoverCardLayer: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .thinBorder(12)
                     .shadow(color: .black.opacity(0.6), radius: 24)
-                    .scaleEffect(open ? 1 : 150 / w, anchor: UnitPoint(x: ux, y: uy))
+                    .scaleEffect(open ? 1 : 170 / w, anchor: UnitPoint(x: ux, y: uy))
                     .opacity(open ? 1 : 0)
                     .animation(zoomOn ? zoomAnimation : nil, value: open)
                     .allowsHitTesting(open)
@@ -1720,14 +1855,14 @@ struct LibraryView: View {
                     ForEach(0..<4, id: \.self) { i in
                         Button { tab = i } label: {
                             Text(i == 0 ? lib.title : ["", "Collections", "Genres", "Favorites"][i])
-                                .font(.callout.weight(.medium))
-                                .padding(.horizontal, 14).padding(.vertical, 7)
-                                .background(tab == i ? Color.white.opacity(0.28) : Color.clear)
-                                .clipShape(Capsule())
+                                .font(.callout.weight(tab == i ? .semibold : .regular))
+                                .padding(.horizontal, 18).frame(height: 32)
+                                .background(Capsule().fill(tab == i ? Color.white.opacity(0.22) : Color.clear))
                                 .foregroundColor(tab == i ? .white : .secondary)
-                        }.buttonStyle(.plain)
+                                .contentShape(Capsule())
+                        }.buttonStyle(.plain).focusEffectDisabled()
                     }
-                }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+                }.padding(4).frame(height: 40).glassCapsule()
             }
             if tab != 2 { controls }
         }
@@ -1755,7 +1890,7 @@ struct LibraryView: View {
                 }.pickerStyle(.inline)
             } label: {
                 Label(sortLabel, systemImage: desc ? "arrow.down" : "arrow.up").pill()
-            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             Menu {
                 Picker("Status", selection: $watch) {
                     Text("All").tag("all")
@@ -1768,7 +1903,7 @@ struct LibraryView: View {
                 }.pickerStyle(.inline)
             } label: {
                 Image(systemName: "line.3.horizontal.decrease.circle").pill(active: filtered)
-            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             if !genre.isEmpty {
                 Button { genre = "" } label: { Label(genre, systemImage: "xmark").pill(active: true) }.buttonStyle(.plain)
             }
@@ -1780,7 +1915,7 @@ struct LibraryView: View {
                 }
                 Button("Refresh") { Task { await load(reset: true) } }
             } label: { Image(systemName: "ellipsis").pill() }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         }
     }
 
@@ -1795,7 +1930,7 @@ struct LibraryView: View {
                     }
                 }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 18) {
                     ForEach(items) { it in
                         PosterCard(item: it).onAppear {
                             if it.id == items.last?.id { Task { await load(reset: false) } }
@@ -1813,14 +1948,13 @@ struct LibraryView: View {
             ForEach([("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
                 Button { layout = m.0 } label: {
                     Image(systemName: m.1).font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 26)
-                        .background(layout == m.0 ? Color.white.opacity(0.28) : Color.clear)
+                        .frame(width: 36, height: 28)
+                        .background(Capsule().fill(layout == m.0 ? Color.white.opacity(0.22) : Color.clear))
                         .foregroundColor(layout == m.0 ? .white : .secondary)
-                        .clipShape(Capsule())
-                        .contentShape(Rectangle())
+                        .contentShape(Capsule())
                 }.buttonStyle(.plain).help(m.0 == "grid" ? "Grid view" : "List view")
             }
-        }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+        }.padding(4).frame(height: 36).glassCapsule()
     }
 
     var genreGrid: some View {
@@ -1891,7 +2025,7 @@ struct DetailView: View {
     @AppStorage("subLang") private var prefSubLang = "english"
     /// First entry of the Subtitles menu: the preferred language when that setting is on, otherwise Off.
     var defaultSubLabel: String { subAlwaysOn ? prefSubLang.capitalized : "Off" }
-    @AppStorage("episodeLayout") private var epLayout = "list"
+    @AppStorage("episodeLayoutTV") private var epLayout = "row"
     @AppStorage("showEpisodeDescription") private var showEpDesc = true   // Settings → Libraries → Series
     @State private var showAllEps = false                                  // "Show all" / "Hide watched" in a season
     @State private var similar: [Item] = []
@@ -1947,6 +2081,7 @@ struct DetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 header
+                pickers
                 if item.isSeries { episodesList }
                 if item.isBox { boxGrid }
                 castSection
@@ -1954,16 +2089,7 @@ struct DetailView: View {
                 similarSection
             }.padding(.bottom, 50)
         }
-        .background(alignment: .top) {
-            ZStack {
-                // Fill the page width without growing it: a filled image sized by its own width made the whole
-                // page wider than the window (pushing the Top bar's Search and Settings off screen)
-                Color.clear.frame(height: 520)
-                    .overlay { Backdrop(id: item.backdropId ?? item.Id) }
-                    .clipped().opacity(0.35)
-                LinearGradient(colors: [Color.clear, bg], startPoint: .top, endPoint: .bottom)
-            }.frame(height: 520)
-        }
+        .ignoresSafeArea(edges: .top)
         .background(bg)
         .task {
             full = await emby.full(item.id)
@@ -1985,30 +2111,101 @@ struct DetailView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar { TitleBarItems(back: { dismiss() }) }
         .hideToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
     }
 
-    // Header: poster + info + pickers + buttons
+    @State private var moreText = false
+
+    /// "Movie · Action · Drama", like Apple TV.
+    var kindLine: String {
+        let kind = item.isSeries ? "TV Show" : item.isEpisode ? "Episode" : item.isBox ? "Collection" : "Movie"
+        return ([kind] + (full?.Genres ?? item.Genres ?? []).prefix(2)).joined(separator: " · ")
+    }
+
+    /// 4K / HD and CC badges from the media.
+    var badges: [String] {
+        var b: [String] = []
+        if let w = streams("Video").first?.Width { b.append(w >= 3200 ? "4K" : w >= 1200 ? "HD" : "SD") }
+        if !streams("Subtitle").isEmpty { b.append("CC") }
+        return b
+    }
+
+    func badge(_ t: String) -> some View {
+        Text(t).font(.system(size: 10, weight: .bold)).padding(.horizontal, 4).padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.75), lineWidth: 1))
+    }
+
+    var starring: [String] { (full?.People ?? []).filter { $0.`Type` == "Actor" }.prefix(3).map { $0.Name } }
+    var directors: [String] { (full?.People ?? []).filter { $0.`Type` == "Director" }.prefix(2).map { $0.Name } }
+
+    // Header: Apple TV style, a full-width backdrop with the logo, info and buttons in the bottom-left corner
     var header: some View {
-        HStack(alignment: .top, spacing: 28) {
-            AsyncImage(url: emby.image(item.id, width: 500)) { img in
-                img.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: { ZStack { Color(white: 0.15); Text(item.Name).padding() } }
-            .frame(width: item.isEpisode ? 320 : 220, height: item.isEpisode ? 180 : 330)
-            .clipped().cornerRadius(10).shadow(color: .black.opacity(0.5), radius: 16, y: 8)
-            VStack(alignment: .leading, spacing: 14) {
-                Text(item.Name).font(.system(size: 46, weight: .black))
-                meta
-                if !simple { streamsRow }
-                buttons
-                if let tag = full?.Taglines?.first { Text(tag).font(.headline) }
-                Text(item.Overview ?? "").frame(maxWidth: 760, alignment: .leading)
-                let directors = (full?.People ?? []).filter { $0.`Type` == "Director" }.map { $0.Name }
-                if !directors.isEmpty {
-                    (Text("Director: ").foregroundColor(.secondary) + Text(directors.joined(separator: ", ")).bold())
-                        .font(.callout)
+        ZStack(alignment: .bottomLeading) {
+            // Fill the page width without growing it (a filled image sized by its own width widened the page)
+            Color.clear.frame(maxWidth: .infinity).frame(height: 600)
+                .overlay { Backdrop(id: item.backdropId ?? item.Id) }.clipped()
+            LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .leading, endPoint: .init(x: 0.65, y: 0.5))
+            LinearGradient(colors: [.clear, .clear, bg.opacity(0.7), bg], startPoint: .top, endPoint: .bottom)
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if item.isEpisode, let sn = item.SeriesName {
+                        Text("\(sn) · S\(item.ParentIndexNumber ?? 0), E\(item.IndexNumber ?? 0)")
+                            .font(.system(size: 15, weight: .semibold)).opacity(0.85)
+                    }
+                    if item.isEpisode { Text(item.Name).font(.system(size: 44, weight: .heavy)).lineLimit(2) }
+                    else { TitleLogo(item: item, height: 110, font: 52) }
+                    HStack(spacing: 8) {
+                        Text(kindLine)
+                        if let o = full?.OfficialRating { badge(o) }
+                        if let r = full?.CommunityRating {
+                            HStack(spacing: 3) { Image(systemName: "star.fill").foregroundColor(.yellow); Text(String(format: "%.1f", r)) }
+                        }
+                    }.font(.system(size: 15, weight: .medium))
+                    if let o = item.Overview, !o.isEmpty {
+                        HStack(alignment: .lastTextBaseline, spacing: 6) {
+                            Text(o).lineLimit(moreText ? nil : 2).frame(maxWidth: 440, alignment: .leading)
+                            if o.count > 110 {
+                                Button(moreText ? "LESS" : "MORE") { withAnimation { moreText.toggle() } }
+                                    .buttonStyle(.plain).font(.system(size: 12, weight: .bold))
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .background(Capsule().fill(Color.white.opacity(0.18)))
+                            }
+                        }.font(.system(size: 15)).foregroundColor(.white.opacity(0.85))
+                    }
+                    HStack(spacing: 8) {
+                        if let y = item.ProductionYear { Text(item.isSeries ? item.yearText : String(y)) }
+                        if let t = full?.RunTimeTicks, t > 0 { Text("· " + runtimeText(t)) }
+                        if let t = full?.RunTimeTicks, t > 0, !simple { Text("· Ends at " + endsAtText(t)) }
+                        ForEach(badges, id: \.self) { badge($0) }
+                    }.font(.system(size: 14)).foregroundColor(.white.opacity(0.85))
+                    buttons.padding(.top, 8)
                 }
+                Spacer(minLength: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    if !starring.isEmpty {
+                        (Text("Starring ").foregroundColor(.white.opacity(0.55)) + Text(starring.joined(separator: ", ")))
+                    }
+                    if !directors.isEmpty {
+                        (Text("Director ").foregroundColor(.white.opacity(0.55)) + Text(directors.joined(separator: ", ")))
+                    }
+                }
+                .font(.system(size: 14)).frame(maxWidth: 280, alignment: .leading).padding(.bottom, 8)
             }
-        }.padding(.horizontal, 40).padding(.top, 40)
+            .padding(.horizontal, 52).padding(.bottom, 30)
+        }
+        .frame(height: 600)
+        .clipped()
+        .foregroundColor(.white)
+    }
+
+    /// Version, audio, subtitle and quality pickers under the header (movies and episodes).
+    @ViewBuilder var pickers: some View {
+        if !simple {
+            VStack(alignment: .leading, spacing: 8) {
+                if let tag = full?.Taglines?.first { Text(tag).font(.headline) }
+                streamsRow
+            }.padding(.horizontal, 52)
+        }
     }
 
     var meta: some View {
@@ -2079,28 +2276,34 @@ struct DetailView: View {
 
     var buttons: some View {
         let played = emby.isPlayed(item)
-        return HStack(spacing: 10) {
+        let fav = emby.isFav(item)
+        return HStack(spacing: 12) {
             Button { playNow() } label: {
-                Label(playLabel, systemImage: "play.fill").bold()
-                    .padding(.horizontal, 24).frame(height: 44)
-                    .background(.white).foregroundColor(.black).clipShape(Capsule())
+                Label(playLabel, systemImage: "play.fill").font(.system(size: 17, weight: .semibold))
+                    .padding(.horizontal, 34).frame(height: 46)
+                    .background(Capsule().fill(.white)).foregroundColor(.black)
             }.buttonStyle(.plain)
             if let t = playTarget, emby.resumeAt(t) > 0 {
-                Button { playNow(from: 0) } label: { Label("Start Over", systemImage: "arrow.counterclockwise").pill() }
-                    .buttonStyle(.plain)
+                glassCircle("arrow.counterclockwise", help: "Start Over") { playNow(from: 0) }
+            }
+            glassCircle(fav ? "checkmark" : "plus", help: fav ? "Remove from Favorites" : "Add to Favorites") {
+                Task { await emby.setFav(item.id, !fav) }
+            }
+            glassCircle(played ? "eye.slash" : "eye", help: played ? "Mark as unwatched" : "Mark as watched") {
+                Task { await emby.setPlayed(item.id, !played) }
             }
             if let t = full?.RemoteTrailers?.first?.Url, let u = URL(string: t) {
-                Button { NSWorkspace.shared.open(u) } label: { Label("Trailer", systemImage: "film").pill() }.buttonStyle(.plain)
+                glassCircle("film", help: "Trailer") { NSWorkspace.shared.open(u) }
             }
-            Button { Task { await emby.setPlayed(item.id, !played) } } label: {
-                if played { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).circleButton() }
-                else { Image(systemName: "checkmark.circle").circleButton() }
-            }.buttonStyle(.plain).help(played ? "Mark as unwatched" : "Mark as watched")
-            Button { Task { await emby.setFav(item.id, !emby.isFav(item)) } } label: {
-                if emby.isFav(item) { Image(systemName: "heart.fill").foregroundStyle(.tint).circleButton() }
-                else { Image(systemName: "heart").circleButton() }
-            }.buttonStyle(.plain).help("Favorite")
         }
+    }
+
+    func glassCircle(_ name: String, help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name).font(.system(size: 17, weight: .semibold))
+                .frame(width: 46, height: 46).background(.ultraThinMaterial, in: Circle())
+                .contentShape(Circle())
+        }.buttonStyle(.plain).help(help)
     }
 
     /// Language name from "English (SRT)" etc., so "eng" and "en" tracks group together.
@@ -2211,8 +2414,8 @@ struct DetailView: View {
 
     var seasonRow: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Seasons").font(.title3.bold()).padding(.horizontal, 40)
-            ArrowScrollRow(ids: seasonNumbers, itemWidth: 170) { n in seasonPoster(n) }
+            Text("Seasons").font(.system(size: 22, weight: .bold)).padding(.horizontal, 52)
+            ArrowScrollRow(ids: seasonNumbers, itemWidth: 170, inset: 52) { n in seasonPoster(n) }
         }
     }
 
@@ -2220,7 +2423,18 @@ struct DetailView: View {
         let multi: Bool = seasonNumbers.count > 1
         let heading: String = multi ? seasonTitle(currentSeason) : "Episodes"
         return HStack(spacing: 16) {
-            Text(heading).font(.title3.bold())
+            if multi {
+                Menu {
+                    ForEach(seasonNumbers, id: \.self) { n in Button(seasonTitle(n)) { season = n } }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(heading).font(.system(size: 22, weight: .bold))
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 14, weight: .semibold)).foregroundColor(.secondary)
+                    }
+                }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            } else {
+                Text(heading).font(.system(size: 22, weight: .bold))
+            }
             if canFilterWatched {
                 Button(showAllEps ? "Hide watched" : "Show all") { showAllEps.toggle() }
                     .buttonStyle(.plain).font(.callout.weight(.semibold)).foregroundStyle(.tint)
@@ -2235,7 +2449,7 @@ struct DetailView: View {
                     ForEach(epLangs, id: \.code) { l in Text(l.name).tag(l.code) }
                 }.labelsHidden().fixedSize()
             }
-        }.padding(.horizontal, 40).padding(.top, 10)
+        }.padding(.horizontal, 52).padding(.top, 10)
     }
 
     /// Netflix-style episode row: big number, clean 16:9 still with progress, title + length, summary.
@@ -2270,7 +2484,7 @@ struct DetailView: View {
             .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1) }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).padding(.horizontal, 40)
+        .buttonStyle(.plain).padding(.horizontal, 52)
         .contextMenu {
             Button("Play from Beginning") { playEpisode(ep, from: 0) }
             Button(played ? "Mark as unwatched" : "Mark as watched") {
@@ -2282,12 +2496,16 @@ struct DetailView: View {
     var episodesList: some View {
         let eps: [Item] = shownEpisodes
         return VStack(alignment: .leading, spacing: 12) {
-            if seasonNumbers.count > 1 { seasonRow }
+            if seasonNumbers.count > 1 && epLayout != "row" { seasonRow }
             episodesHeader
-            if epLayout == "grid" {
+            if epLayout == "row" {
+                ArrowScrollRow(ids: eps.map { $0.id }, itemWidth: 360, spacing: 22, inset: 52) { id in
+                    if let ep = eps.first(where: { $0.id == id }) { episodeCard(ep) }
+                }
+            } else if epLayout == "grid" {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 18)], spacing: 22) {
                     ForEach(eps) { ep in episodeTile(ep) }
-                }.padding(.horizontal, 40)
+                }.padding(.horizontal, 52)
             } else {
                 ForEach(eps) { ep in episodeRow(ep) }
             }
@@ -2296,17 +2514,16 @@ struct DetailView: View {
 
     var episodeLayoutToggle: some View {
         HStack(spacing: 0) {
-            ForEach([("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
+            ForEach([("row", "rectangle.split.3x1"), ("grid", "square.grid.2x2"), ("list", "list.bullet")], id: \.0) { m in
                 Button { epLayout = m.0 } label: {
                     Image(systemName: m.1).font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 26)
-                        .background(epLayout == m.0 ? Color.white.opacity(0.28) : Color.clear)
+                        .frame(width: 36, height: 28)
+                        .background(Capsule().fill(epLayout == m.0 ? Color.white.opacity(0.22) : Color.clear))
                         .foregroundColor(epLayout == m.0 ? .white : .secondary)
-                        .clipShape(Capsule())
-                        .contentShape(Rectangle())
-                }.buttonStyle(.plain).help(m.0 == "grid" ? "Grid view" : "List view")
+                        .contentShape(Capsule())
+                }.buttonStyle(.plain).help(m.0 == "row" ? "Row view" : m.0 == "grid" ? "Grid view" : "List view")
             }
-        }.padding(3).background(Color.white.opacity(0.1)).clipShape(Capsule())
+        }.padding(4).frame(height: 36).glassCapsule()
     }
 
 
@@ -2318,6 +2535,59 @@ struct DetailView: View {
             t += " · " + runtimeText(left) + " left"
         }
         return t
+    }
+
+    /// Apple TV episode card: still with "EPISODE 1", the title, summary and "▶ 59m" over a dark fade.
+    func episodeCard(_ ep: Item) -> some View {
+        let played: Bool = emby.isPlayed(ep)
+        let pct: Double = ep.UserData?.PlayedPercentage ?? 0
+        let hasProgress: Bool = pct > 0 && pct < 100 && !played
+        return Button { playEpisode(ep) } label: {
+            AsyncImage(url: emby.image(ep.id, width: 720, plain: true)) { img in
+                img.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: { Color(white: 0.15) }
+            .frame(width: 360, height: showEpDesc ? 330 : 203).clipped()
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("EPISODE \(ep.IndexNumber ?? 0)").font(.system(size: 12, weight: .medium)).opacity(0.7)
+                    Text(ep.Name).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                    if showEpDesc {
+                        Text(ep.Overview ?? "").font(.system(size: 13)).opacity(0.8).lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        Image(systemName: played ? "checkmark" : "play.fill").font(.system(size: 11))
+                        if hasProgress {
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.35))
+                                Capsule().fill(Color.white).frame(width: 34 * pct / 100)
+                            }.frame(width: 34, height: 4)
+                        }
+                        if let t = ep.RunTimeTicks, t > 0 {
+                            let left = hasProgress ? max(0, t - (ep.UserData?.PlaybackPositionTicks ?? 0)) : t
+                            Text(runtimeText(left) + (hasProgress ? " left" : "")).font(.system(size: 13, weight: .medium))
+                        }
+                    }.padding(.top, 4)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16).padding(.top, 70).padding(.bottom, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LinearGradient(stops: [.init(color: .clear, location: 0),
+                                                   .init(color: .black.opacity(0.75), location: 0.45),
+                                                   .init(color: .black.opacity(0.9), location: 1)],
+                                           startPoint: .top, endPoint: .bottom))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .thinBorder(12)
+            .hoverLift(play: 44)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Play from Beginning") { playEpisode(ep, from: 0) }
+            Button(played ? "Mark as unwatched" : "Mark as watched") {
+                Task { await emby.setPlayed(ep.id, !played) }
+            }
+        }
     }
 
     func episodeTile(_ ep: Item) -> some View {
@@ -2374,17 +2644,17 @@ struct DetailView: View {
     }
 
     var boxGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 18) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 18) {
             ForEach(kids) { PosterCard(item: $0) }
-        }.padding(.horizontal, 40)
+        }.padding(.horizontal, 52)
     }
 
     @ViewBuilder var castSection: some View {
         let people = Array((full?.People ?? []).prefix(30))
         if !people.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Cast & Crew").font(.title3.bold()).padding(.horizontal, 40)
-                ArrowScrollRow(ids: Array(people.indices), itemWidth: 104) { i in
+                Text("Cast & Crew").font(.system(size: 22, weight: .bold)).padding(.horizontal, 52)
+                ArrowScrollRow(ids: Array(people.indices), itemWidth: 104, inset: 52) { i in
                     NavigationLink(value: PersonRef(id: people[i].Id, name: people[i].Name)) { CastTile(p: people[i]) }
                         .buttonStyle(.plain).help("Show everything with \(people[i].Name)")
                 }
@@ -2432,21 +2702,92 @@ struct DetailView: View {
                         Text(mediaInfo(s, f)).foregroundColor(.secondary)
                     }
                 }
-            }.padding(.horizontal, 40).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 52).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     @ViewBuilder var similarSection: some View {
         if !similar.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("More Like This").font(.title3.bold()).padding(.horizontal, 40)
-                ArrowScrollRow(ids: Array(similar.indices), itemWidth: 150, spacing: 14) { PosterCard(item: similar[$0]) }
+                Text("More Like This").font(.system(size: 22, weight: .bold)).padding(.horizontal, 52)
+                ArrowScrollRow(ids: Array(similar.indices), itemWidth: 170, spacing: 14, inset: 52) { PosterCard(item: similar[$0]) }
             }
         }
     }
 }
 
-// MARK: - Player (inside the main window)
+// MARK: - Media keys and Control Center
+
+/// Play/pause and skip from the keyboard's media keys, AirPods and Control Center, with the title and
+/// progress shown in the Mac's Now Playing widget.
+@MainActor
+enum RemoteControls {
+    static func attach(_ m: PlayerModel, skip: Double) {
+        let c = MPRemoteCommandCenter.shared()
+        detach()
+        c.togglePlayPauseCommand.addTarget { _ in m.togglePlay(); return .success }
+        c.playCommand.addTarget { _ in if !m.playing { m.togglePlay() }; return .success }
+        c.pauseCommand.addTarget { _ in if m.playing { m.togglePlay() }; return .success }
+        c.skipForwardCommand.preferredIntervals = [NSNumber(value: skip)]
+        c.skipBackwardCommand.preferredIntervals = [NSNumber(value: skip)]
+        c.skipForwardCommand.addTarget { _ in m.skip(skip); return .success }
+        c.skipBackwardCommand.addTarget { _ in m.skip(-skip); return .success }
+        c.changePlaybackPositionCommand.addTarget { e in
+            guard let e = e as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            m.seek(to: e.positionTime); return .success
+        }
+    }
+
+    static func detach() {
+        let c = MPRemoteCommandCenter.shared()
+        for cmd in [c.togglePlayPauseCommand, c.playCommand, c.pauseCommand, c.skipForwardCommand,
+                    c.skipBackwardCommand, c.changePlaybackPositionCommand] as [MPRemoteCommand] {
+            cmd.removeTarget(nil)
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+
+    static func update(_ item: Item, _ m: PlayerModel) {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: item.isEpisode ? item.Name : item.heroTitle,
+            MPMediaItemPropertyPlaybackDuration: m.duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: m.time,
+            MPNowPlayingInfoPropertyPlaybackRate: m.playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+        ]
+        if item.isEpisode {
+            info[MPMediaItemPropertyArtist] = "\(item.heroTitle) · S\(item.ParentIndexNumber ?? 0), E\(item.IndexNumber ?? 0)"
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        MPNowPlayingInfoCenter.default().playbackState = m.playing ? .playing : .paused
+    }
+}
+
+// MARK: - Player window
+
+/// Contents of the separate player window. Closing the window (red button) stops playback.
+struct PlayerWindow: View {
+    @EnvironmentObject var emby: Emby
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let req = emby.playing { PlayerView(req: req).id(req.id) }
+        }
+        .ignoresSafeArea()
+        .onAppear {
+            if emby.playing == nil || !UserDefaults.standard.bool(forKey: "separatePlayer") { dismiss(); return }
+            // Let the green button and F make the player window full screen
+            DispatchQueue.main.async {
+                NSApp.windows.first { $0.title == "Player" }?.collectionBehavior.insert(.fullScreenPrimary)
+            }
+        }   // never show an empty player (e.g. restored at launch)
+        .onDisappear { if emby.playing != nil { emby.playing = nil } }
+    }
+}
+
+// MARK: - Player
 
 @MainActor
 final class PlayerModel: ObservableObject {
@@ -2948,6 +3289,7 @@ struct PlayerView: View {
     @State private var sliderW: CGFloat = 1
     @State private var upNextCancelled = false
     @State private var switching = false
+    @State private var escMonitor: Any?
 
     // Subtitle appearance (defaults: normal size, white, drop shadow, transparent, 10% from bottom)
     @AppStorage("subTextSize") private var subTextSize = "normal"
@@ -2982,10 +3324,14 @@ struct PlayerView: View {
     var window: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
 
     /// Height of the window's title bar while windowed (0 in full screen, where there is none).
+    /// The player has its own window with no title bar, so the video fills it all (the window buttons float on top).
     var titleBarHeight: CGFloat {
-        guard !isFullScreen, let w = window, !w.styleMask.contains(.fullScreen) else { return 0 }
+        guard !separate, !isFullScreen, let w = window, !w.styleMask.contains(.fullScreen) else { return 0 }
         return max(0, w.frame.height - w.contentLayoutRect.height)
     }
+    var separate: Bool { UserDefaults.standard.bool(forKey: "separatePlayer") }
+    /// Room for the floating window buttons above the top controls (separate window only, none in full screen).
+    var windowButtonsGap: CGFloat { separate && !isFullScreen ? 22 : 0 }
     /// Color of the strip under the title bar. The system draws the bar's own gray (about 93 % opaque) over it,
     /// and the result is the same gray on both sides only when this strip is (44, 45, 45).
     static let titleBarGray = Color(red: 44 / 255, green: 45 / 255, blue: 45 / 255)
@@ -3018,6 +3364,7 @@ struct PlayerView: View {
     /// Full screen for the video; leaving the player restores the window if the player made it full screen.
     func toggleFullScreen() {
         guard let w = window else { return }
+        w.collectionBehavior.insert(.fullScreenPrimary)   // the separate player window isn't full-screen capable by default
         let on = w.styleMask.contains(.fullScreen)
         if !on { enteredFullScreen = true }
         w.toggleFullScreen(nil)
@@ -3099,14 +3446,16 @@ struct PlayerView: View {
                 subtitleLayer(geo.size).animation(.easeOut(duration: 0.2), value: showUI)
 
                 if showUI || panel != nil {
-                    LinearGradient(colors: [.black.opacity(0.7), .clear, .clear, .black.opacity(0.85)],
+                    LinearGradient(colors: [.black.opacity(0.45), .clear, .clear, .black.opacity(0.7)],
                                    startPoint: .top, endPoint: .bottom)
                         .ignoresSafeArea().allowsHitTesting(false)
+                    centerControls.transition(.opacity)
                     VStack(spacing: 0) {
                         topBar
                         Spacer()
                         bottomBar
                     }
+                    .padding(.top, titleBarHeight)
                     .transition(.opacity)
                 }
 
@@ -3170,15 +3519,31 @@ struct PlayerView: View {
             }
         }
         .toolbar(.hidden, for: .windowToolbar)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in isFullScreen = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in isFullScreen = false }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            isFullScreen = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { n in
+            isFullScreen = false
+            // Take the keyboard back after leaving full screen, so Esc / Space / F keep working
+            (n.object as? NSWindow)?.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
+        }
         .onKeyPress(.leftArrow) { model.skip(-Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
-        .onKeyPress(.escape) {
-            // Esc: close a panel, else leave full screen (video keeps playing), else close the player
-            if panel != nil { panel = nil } else if isFullScreen { toggleFullScreen() } else { close() }
-            return .handled
+        // Esc: close a panel, else leave full screen (video keeps playing), else close the player.
+        // Caught at the app level: AppKit sometimes swallows Esc before SwiftUI's key handlers see it
+        // (after full screen, and in the separate player window).
+        .onAppear {
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+                guard ev.keyCode == 53, NSApp.keyWindow?.attachedSheet == nil,
+                      NSApp.keyWindow?.sheetParent == nil else { return ev }
+                let full = NSApp.keyWindow?.styleMask.contains(.fullScreen) ?? false
+                if panel != nil { panel = nil } else if full { toggleFullScreen() } else { close() }
+                return nil
+            }
         }
+        .onDisappear { if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil } }
         .task {
             focused = true
             isFullScreen = window?.styleMask.contains(.fullScreen) ?? false
@@ -3186,7 +3551,16 @@ struct PlayerView: View {
             if item.isEpisode, let sid = item.SeriesId { episodes = await emby.episodes(sid) }
         }
         .task { await model.start(emby, req) }
-        .onDisappear { model.stop() }
+        .onDisappear { model.stop(); if emby.playing == nil { RemoteControls.detach() } }   // keep keys when switching episodes
+        // Media keys / Control Center
+        .onAppear { RemoteControls.attach(model, skip: Double(skipSecs)) }
+        .onChange(of: model.playing) { RemoteControls.update(item, model) }
+        .onChange(of: model.duration) { RemoteControls.update(item, model) }
+        .onChange(of: Int(model.time / 10)) { RemoteControls.update(item, model) }
+        // Closing the player window (red button or ⌘W) stops playback, like Esc
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
+            if (n.object as? NSWindow)?.title == "Player" { close() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
             if autoNext, !upNextCancelled, let n = nextEp { play(n) } else { close() }
         }
@@ -3238,21 +3612,66 @@ struct PlayerView: View {
     // MARK: Top bar
 
     var topBar: some View {
-        HStack(spacing: 16) {
-            // The pill that used to sit here is hidden (kept, not deleted): in full screen Esc does the job, and in a
-            // window it moved to the title bar (titleBarBack, now off too). Set inPlayerBackPill to true to bring it back.
+        HStack(alignment: .top, spacing: 16) {
             if Self.inPlayerBackPill { BackPill { back() }.help(isFullScreen ? "Exit full screen (Esc)" : "Back (Esc)") }
-            AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
-                img.resizable().aspectRatio(contentMode: .fit)
-            } placeholder: { EmptyView() }
-            .frame(maxWidth: 160, maxHeight: 40, alignment: .leading)
+            // Left glass group: picture in picture, full screen, info (Apple TV style)
+            HStack(spacing: 6) {
+                if model.pipSupported {
+                    glassIcon(model.pipActive ? "pip.exit" : "pip.enter", on: model.pipActive) { model.togglePiP() }
+                        .help("Picture in picture (P)")
+                }
+                glassIcon(isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
+                    toggleFullScreen()
+                }.help(isFullScreen ? "Exit full screen (F)" : "Full screen (F)")
+                glassIcon("info.circle", on: showInfo) { showInfo.toggle() }.help("Playback info (I)")
+            }
+            .padding(.horizontal, 8).frame(height: 50).background(.ultraThinMaterial, in: Capsule())
             Spacer()
-            Slider(value: $model.volume, in: 0...1).frame(width: 160).tint(.white).controlSize(.small)
-            Button { model.volume = model.volume > 0 ? 0 : 1 } label: {
-                Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 18))
-            }.buttonStyle(.plain)
+            // Right glass group: volume
+            HStack(spacing: 12) {
+                Slider(value: $model.volume, in: 0...1).frame(width: 170).tint(.white).controlSize(.small)
+                Button { model.volume = model.volume > 0 ? 0 : 1 } label: {
+                    Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 17))
+                        .frame(width: 26)
+                }.buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).frame(height: 50).background(.ultraThinMaterial, in: Capsule())
         }
-        .padding(.horizontal, 20).padding(.top, 14)
+        .padding(.horizontal, 20).padding(.top, 16 + windowButtonsGap)
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// Small icon button inside a glass capsule.
+    func glassIcon(_ name: String, on: Bool = false, _ action: @escaping () -> Void) -> some View {
+        Button { action(); poke() } label: {
+            Image(systemName: name).font(.system(size: 18, weight: .medium))
+                .frame(width: 40, height: 40)
+                .foregroundColor(on ? accent : .white)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    /// Apple TV style: back 10, play / pause and forward 10 as big glass circles in the middle of the picture.
+    var centerControls: some View {
+        HStack(spacing: 44) {
+            centerCircle("gobackward.\(skipSecs)", size: 30, box: 92) { model.skip(-Double(skipSecs)) }
+                .help("Back \(skipSecs) seconds")
+            centerCircle(model.playing ? "pause.fill" : "play.fill", size: 50, box: 140) { model.togglePlay() }
+                .help(model.playing ? "Pause (Space)" : "Play (Space)")
+            centerCircle("goforward.\(skipSecs)", size: 30, box: 92) { model.skip(Double(skipSecs)) }
+                .help("Forward \(skipSecs) seconds")
+        }
+        .environment(\.colorScheme, .dark)
+    }
+
+    func centerCircle(_ name: String, size: CGFloat, box: CGFloat, _ action: @escaping () -> Void) -> some View {
+        Button { action(); poke() } label: {
+            Image(systemName: name).font(.system(size: size, weight: .semibold))
+                .frame(width: box, height: box)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .contentShape(Circle())
+        }.buttonStyle(.plain)
     }
 
     // MARK: Bottom bar
@@ -3263,65 +3682,72 @@ struct PlayerView: View {
     }
 
     var bottomBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .bottom) {
+                // Episode name small above the show's name, as on Apple TV
                 VStack(alignment: .leading, spacing: 4) {
-                    if let l = episodeLine { Text(l).font(.system(size: 16, weight: .medium)).opacity(0.85) }
-                    Text(item.heroTitle).font(.system(size: 28, weight: .bold))
+                    if item.isEpisode {
+                        Text("S\(item.ParentIndexNumber ?? 0), E\(item.IndexNumber ?? 0) · \(item.Name)")
+                            .font(.system(size: 17, weight: .semibold)).opacity(0.85)
+                    }
+                    Text(item.heroTitle).font(.system(size: 34, weight: .bold)).lineLimit(1)
                 }
                 Spacer()
-                HStack(spacing: 26) {
-                    iconButton("captions.bubble", on: panel != nil) {
+                // Right glass group: previous / next episode, episodes, subtitles, quality, chapters, all options
+                HStack(spacing: 6) {
+                    if item.isEpisode && episodes.count > 1 {
+                        glassIcon("backward.end.fill") { if let p = prevEp { play(p) } else { model.seek(to: 0) } }
+                            .help("Previous")
+                        glassIcon("forward.end.fill") { if let n = nextEp { play(n) } }
+                            .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
+                        glassIcon("rectangle.stack", on: panel == .episodes) {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                if panel != .episodes { pickerSeason = item.ParentIndexNumber ?? 1 }
+                                panel = panel == .episodes ? nil : .episodes
+                            }
+                        }.help("Episodes (E)")
+                    }
+                    if !model.subStreams.isEmpty { subtitleMenu.padding(.horizontal, 5) }
+                    qualityMenu.padding(.horizontal, 5)
+                    if !model.chapterList.isEmpty {
+                        glassIcon("list.bullet.rectangle", on: panel == .chapters) {
+                            withAnimation(.easeOut(duration: 0.2)) { panel = panel == .chapters ? nil : .chapters }
+                        }.help("Chapters (C)")
+                    }
+                    glassIcon("waveform", on: panel != nil && panel != .episodes && panel != .chapters) {
                         withAnimation(.easeOut(duration: 0.2)) { panel = panel == nil ? .subtitles : nil }
                     }.help("Subtitles, audio, quality & speed")
                 }
+                .padding(.horizontal, 8).frame(height: 50).background(.ultraThinMaterial, in: Capsule())
             }
 
-            Slider(value: Binding(get: { scrubbing ? scrub : model.time },
-                                  set: { scrub = $0 }),
-                   in: 0...max(model.duration, 1)) { editing in
-                if editing { scrub = model.time; scrubbing = true }
-                else { model.seek(to: scrub); scrubbing = false }
+            // Scrubber in a glass capsule: elapsed time, bar, time left
+            HStack(spacing: 14) {
+                Text(fmt(scrubbing ? scrub : model.time)).frame(minWidth: 52, alignment: .leading)
+                Slider(value: Binding(get: { scrubbing ? scrub : model.time },
+                                      set: { scrub = $0 }),
+                       in: 0...max(model.duration, 1)) { editing in
+                    if editing { scrub = model.time; scrubbing = true }
+                    else { model.seek(to: scrub); scrubbing = false }
+                }
+                .tint(.white).controlSize(.small)
+                .background(GeometryReader { g in
+                    Color.clear.onAppear { sliderW = g.size.width }.onChange(of: g.size.width) { _, w in sliderW = w }
+                })
+                .onContinuousHover { ph in
+                    if case .active(let p) = ph { hoverX = p.x } else { hoverX = nil }
+                }
+                .overlay(alignment: .bottomLeading) { scrubPreview }
+                Text("-" + fmt(max(0, model.duration - (scrubbing ? scrub : model.time))))
+                    .frame(minWidth: 60, alignment: .trailing)
+                    .help("Ends at \(endClock)")
             }
-            .tint(accent).controlSize(.small)
-            .background(GeometryReader { g in
-                Color.clear.onAppear { sliderW = g.size.width }.onChange(of: g.size.width) { _, w in sliderW = w }
-            })
-            .onContinuousHover { ph in
-                if case .active(let p) = ph { hoverX = p.x } else { hoverX = nil }
-            }
-            .overlay(alignment: .bottomLeading) { scrubPreview }
-
-            HStack {
-                Text(fmt(scrubbing ? scrub : model.time))
-                Spacer()
-                Text("-\(fmt(max(0, model.duration - (scrubbing ? scrub : model.time))))  /  \(endClock)")
-            }
-            .font(.system(size: 14).monospacedDigit()).opacity(0.85)
-
-            HStack(spacing: 30) {
-                iconButton("backward.end.fill", size: 18) { if let p = prevEp { play(p) } else { model.seek(to: 0) } }
-                    .help("Previous")
-                iconButton("gobackward.\(skipSecs)", size: 22) { model.skip(-Double(skipSecs)) }.help("Back \(skipSecs) seconds")
-                Button { model.togglePlay(); poke() } label: {
-                    Image(systemName: model.playing ? "pause.fill" : "play.fill").font(.system(size: 22, weight: .bold))
-                        .foregroundColor(.black)
-                        .frame(width: 56, height: 56)
-                        .background(Circle().fill(Color.white))
-                        .contentShape(Circle())
-                }.buttonStyle(.plain).help(model.playing ? "Pause (Space)" : "Play (Space)")
-                iconButton("goforward.\(skipSecs)", size: 22) { model.skip(Double(skipSecs)) }.help("Forward \(skipSecs) seconds")
-                iconButton("forward.end.fill", size: 18) { if let n = nextEp { play(n) } }
-                    .opacity(nextEp == nil ? 0.35 : 1).disabled(nextEp == nil).help("Next")
-                Spacer()
-                extraButtons
-                iconButton(isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", size: 18) {
-                    toggleFullScreen()
-                }.help(isFullScreen ? "Exit full screen (F)" : "Full screen (F)")
-            }
-            .padding(.top, 4)
+            .font(.system(size: 14, weight: .medium).monospacedDigit()).foregroundColor(.white.opacity(0.85))
+            .padding(.horizontal, 22).frame(height: 50)
+            .background(.ultraThinMaterial, in: Capsule())
         }
-        .padding(.horizontal, 34).padding(.bottom, 24)
+        .padding(.horizontal, 20).padding(.bottom, 20)
+        .environment(\.colorScheme, .dark)
     }
 
     func iconButton(_ name: String, size: CGFloat = 22, on: Bool = false, _ action: @escaping () -> Void) -> some View {
