@@ -386,6 +386,7 @@ struct HomeView: View {
                 .navigationDestination(for: Item.self) { DetailView(item: $0) }
                 .navigationDestination(for: PersonRef.self) { PersonView(person: $0) }
                 .navigationDestination(for: Feed.self) { FeedView(feed: $0) }
+                .navigationDestination(for: FavoriteGridRef.self) { FavoriteGridView(title: $0.title, ids: $0.ids) }
             }
             // Back button in the title bar, left of the window title, on every page
             .toolbar { TitleBarItems(back: nil) }   // top-level pages: no Back (pushed pages add their own)
@@ -398,10 +399,16 @@ struct HomeView: View {
 
     /// Top bar layout: a navigation row under the title bar (see TopNavBar), with the page area below it.
     var topLayout: some View {
-        VStack(spacing: 0) {
-            // In front of the page, so nothing on a page can cover its buttons. Back sits in the bar on pushed pages.
-            TopNavBar(back: path.isEmpty ? nil : { path.removeLast() }).zIndex(1)
-            detailPane(withSearch: false).clipped()
+        // Both the bar and the page are held to the window's width: a page that grew wider than the window
+        // (e.g. Favorites) made the bar wider too, pushing its pill off screen where it couldn't be clicked.
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // In front of the page, so nothing on a page can cover its buttons. Back sits in the bar on pushed pages.
+                TopNavBar(back: path.isEmpty ? nil : { path.removeLast() })
+                    .frame(width: geo.size.width).zIndex(1)
+                detailPane(withSearch: false)
+                    .frame(width: geo.size.width).clipped()
+            }
         }.background(bg)
     }
 
@@ -471,8 +478,14 @@ struct TopNavBar: View {
         // fixed height keeps the bar from growing: nothing moves when Back appears or disappears.
         HStack(spacing: 16) {
             HStack { if let back { TopBackButton(action: back) } }
+                .fixedSize()   // never squeezed below Back's own width
                 .frame(maxWidth: .infinity, alignment: .leading)
-            TopNavButtons().layoutPriority(1)
+            // On a narrow window the sections don't all fit: the pill then scrolls sideways instead of
+            // spilling past the window edge, where its buttons can't be clicked and Back gets squeezed out
+            ViewThatFits(in: .horizontal) {
+                TopNavButtons()
+                ScrollView(.horizontal, showsIndicators: false) { TopNavButtons() }
+            }.layoutPriority(1)
             TopNavTools().fixedSize()
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -705,7 +718,8 @@ struct FavoritesView: View {
     func section(_ title: String, _ list: [Item]) -> some View {
         let byId = Dictionary(list.map { ($0.Id, $0) }, uniquingKeysWith: { a, _ in a })
         return VStack(alignment: .leading, spacing: 8) {
-            NavigationLink { FavoriteGridView(title: title, ids: list.map(\.Id)) } label: {
+            // Opened through the page path (like every other page), so Back shows and the top bar can leave it
+            NavigationLink(value: FavoriteGridRef(title: title, ids: list.map(\.Id))) {
                 HStack(spacing: 6) {
                     Text(title).font(.title3.bold())
                     Image(systemName: "chevron.right").font(.system(size: 15, weight: .bold)).foregroundColor(.secondary)
@@ -719,6 +733,12 @@ struct FavoritesView: View {
 }
 
 /// Full grid for one Favorites section (the › in the heading).
+/// A Favorites section ("Favorite Movies ›" and so on) opened as a page.
+struct FavoriteGridRef: Hashable {
+    let title: String
+    let ids: [String]
+}
+
 struct FavoriteGridView: View {
     @EnvironmentObject var emby: Emby
     @Environment(\.appBG) var bg
