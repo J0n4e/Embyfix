@@ -212,6 +212,33 @@ final class Emby: ObservableObject {
     @Published var positions: [String: Double] = [:]
     var loggedIn: Bool { !token.isEmpty }
 
+    /// The signed-in server is Jellyfin (not Emby). Jellyfin speaks the same API, but takes the token in the
+    /// `Authorization` header and as `ApiKey=` in links, where Emby uses `X-Emby-Token` and `api_key=`.
+    @Published var isJellyfin = false
+    /// Query name for the token in image / stream / subtitle links.
+    var keyName: String { isJellyfin ? "ApiKey" : "api_key" }
+
+    /// Adds the token to a request in every form Emby and Jellyfin accept.
+    func authorize(_ r: inout URLRequest, token t: String? = nil) {
+        let t = t ?? token
+        r.setValue(t, forHTTPHeaderField: "X-Emby-Token")
+        r.setValue(authHeader + ", Token=\"\(t)\"", forHTTPHeaderField: "Authorization")
+    }
+
+    /// Asks the server what it is ("Jellyfin Server" in ProductName) and remembers the answer per server.
+    static func detectJellyfin(_ s: String) async -> Bool? {
+        guard let u = URL(string: s + "/System/Info/Public"),
+              let (data, _) = try? await URLSession.shared.data(from: u),
+              let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return ((j["ProductName"] as? String) ?? "").localizedCaseInsensitiveContains("jellyfin")
+    }
+
+    func refreshServerKind() async {
+        let key = "jellyfin-" + server.lowercased()
+        isJellyfin = d.bool(forKey: key)
+        if let j = await Self.detectJellyfin(server) { isJellyfin = j; d.set(j, forKey: key) }
+    }
+
     private func saveServers() {
         if let data = try? JSONEncoder().encode(servers) { d.set(data, forKey: "servers") }
     }
@@ -238,7 +265,7 @@ final class Emby: ObservableObject {
         guard let t = e.token, let u = e.userId,
               let url = URL(string: "\(e.url)/Users/\(u)") else { return false }
         var r = URLRequest(url: url)
-        r.setValue(t, forHTTPHeaderField: "X-Emby-Token")
+        authorize(&r, token: t)
         r.timeoutInterval = 10
         guard let (_, resp) = try? await URLSession.shared.data(for: r),
               (resp as? HTTPURLResponse)?.statusCode == 200 else {
@@ -248,6 +275,7 @@ final class Emby: ObservableObject {
         resetSession()
         server = e.url; token = t; userId = u
         d.set(server, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
+        await refreshServerKind()
         return true
     }
 
@@ -282,6 +310,8 @@ final class Emby: ObservableObject {
         userId = d.string(forKey: "uid") ?? ""
         if let data = d.data(forKey: "servers"),
            let list = try? JSONDecoder().decode([SavedServer].self, from: data) { servers = list }
+        isJellyfin = d.bool(forKey: "jellyfin-" + server.lowercased())
+        if !server.isEmpty { Task { await refreshServerKind() } }
         // Remember the server from before saved servers existed.
         if servers.isEmpty, !server.isEmpty, !token.isEmpty {
             servers = [SavedServer(url: server, name: server, user: "", token: token, userId: userId)]
@@ -298,6 +328,8 @@ final class Emby: ObservableObject {
         var r = URLRequest(url: URL(string: s + "/Users/AuthenticateByName")!)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Jellyfin only reads `Authorization`; Emby reads either
+        r.setValue(authHeader, forHTTPHeaderField: "Authorization")
         r.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
         r.httpBody = try JSONSerialization.data(withJSONObject: ["Username": user, "Pw": pw])
         let (data, _) = try await URLSession.shared.data(for: r)
@@ -308,6 +340,7 @@ final class Emby: ObservableObject {
         resetSession()
         server = s; token = t; userId = u
         d.set(s, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
+        await refreshServerKind()
         let name = await serverName(s) ?? servers.first { $0.id == s.lowercased() }?.name ?? s
         upsert(SavedServer(url: s, name: name, user: user, token: t, userId: u))
     }
@@ -330,7 +363,7 @@ final class Emby: ObservableObject {
         var c = URLComponents(string: server + path)!
         c.queryItems = q.map { URLQueryItem(name: $0.key, value: $0.value) }
         var r = URLRequest(url: c.url!)
-        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        authorize(&r)
         let (data, _) = try await URLSession.shared.data(for: r)
         return try JSONDecoder().decode(T.self, from: data)
     }
@@ -339,7 +372,7 @@ final class Emby: ObservableObject {
     func sessionInfo() async -> [String: Any]? {
         guard let u = URL(string: "\(server)/Sessions?DeviceId=\(deviceId)") else { return nil }
         var r = URLRequest(url: u)
-        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        authorize(&r)
         guard let (d, _) = try? await URLSession.shared.data(for: r),
               let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
         return arr.first
@@ -354,7 +387,7 @@ final class Emby: ObservableObject {
 
     /// Thumbnail strip for scrubbing previews (Roku BIF format), if the server has generated one.
     func bifData(_ id: String, _ sourceId: String?) async -> Data? {
-        var s = "\(server)/Videos/\(id)/index.bif?Width=320&api_key=\(token)"
+        var s = "\(server)/Videos/\(id)/index.bif?Width=320&\(keyName)=\(token)"
         if let sourceId { s += "&MediaSourceId=\(sourceId)" }
         guard let u = URL(string: s), let (d, r) = try? await URLSession.shared.data(from: u),
               (r as? HTTPURLResponse)?.statusCode == 200, d.count > 64 else { return nil }
@@ -362,7 +395,7 @@ final class Emby: ObservableObject {
     }
 
     func chapterImage(_ id: String, _ index: Int, _ tag: String) -> URL? {
-        URL(string: "\(server)/Items/\(id)/Images/Chapter/\(index)?maxWidth=320&tag=\(tag)&api_key=\(token)")
+        URL(string: "\(server)/Items/\(id)/Images/Chapter/\(index)?maxWidth=320&tag=\(tag)&\(keyName)=\(token)")
     }
 
     /// Debug: this device's session as the server sees it (play state + transcode info), as raw JSON.
@@ -382,7 +415,7 @@ final class Emby: ObservableObject {
 
     /// `plain`: skip the server's image enhancers (e.g. the TV-set frame some plugins draw on episode stills).
     func image(_ id: String, _ kind: String = "Primary", width: Int = 400, plain: Bool = false) -> URL? {
-        URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&api_key=\(token)"
+        URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&\(keyName)=\(token)"
             + (plain ? "&EnableImageEnhancers=false" : ""))
     }
 
@@ -437,8 +470,12 @@ final class Emby: ObservableObject {
     /// Emby's "Latest" list for a library (what the Emby apps show in their Latest rows).
     func latest(_ lib: LibPref, limit: Int) async -> [Item] {
         let r: [Item]? = try? await get("/Users/\(userId)/Items/Latest",
-            ["ParentId": lib.id, "Limit": String(limit), "Fields": "Overview,Genres,EndDate,Status"])
-        return r ?? []
+            ["ParentId": lib.id, "Limit": String(limit), "Fields": "Overview,Genres,EndDate,Status",
+             // videos only: music libraries would otherwise put albums on Home (and in the banner)
+             "IncludeItemTypes": "Movie,Series,Episode,BoxSet,Video,MusicVideo"])
+        // Jellyfin ignores the type filter here, so drop albums, songs, books and photos ourselves
+        let video: Set<String> = ["Movie", "Series", "Episode", "BoxSet", "Video", "MusicVideo"]
+        return (r ?? []).filter { video.contains($0.`Type` ?? "") }
     }
 
     func genres(_ lib: LibPref) async -> [String] {
@@ -523,8 +560,7 @@ final class Emby: ObservableObject {
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
-        r.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        authorize(&r)
         r.httpBody = try? JSONSerialization.data(withJSONObject: body)
         _ = try? await URLSession.shared.data(for: r)
     }
@@ -606,7 +642,7 @@ final class Emby: ObservableObject {
         guard let url = URL(string: server + path) else { return }
         var r = URLRequest(url: url)
         r.httpMethod = method
-        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        authorize(&r)
         _ = try? await URLSession.shared.data(for: r)
     }
     func setPlayed(_ id: String, _ v: Bool) async {
@@ -682,7 +718,7 @@ final class Emby: ObservableObject {
 
     private func absolute(_ path: String, noCopy: Bool = false) -> URL? {
         var s = path.hasPrefix("http") ? path : server + (path.hasPrefix("/") ? path : "/" + path)
-        if !s.contains("api_key=") { s += (s.contains("?") ? "&" : "?") + "api_key=" + token }
+        if !s.contains("api_key=") && !s.contains("ApiKey=") { s += (s.contains("?") ? "&" : "?") + keyName + "=" + token }
         if noCopy { s = Self.withoutVideoCopy(s) }
         return URL(string: s)
     }
@@ -716,7 +752,7 @@ final class Emby: ObservableObject {
     func subtitleCues(_ itemId: String, _ sourceId: String?, _ index: Int) async -> [Cue]? {
         var sid = sourceId
         if sid == nil { sid = await full(itemId)?.MediaSources?.first?.Id }
-        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt?api_key=\(token)") else { return nil }
+        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt?\(keyName)=\(token)") else { return nil }
         // Embedded subtitles are extracted from the whole video file the first time, which can take minutes.
         var r = URLRequest(url: u)
         r.timeoutInterval = 600
@@ -755,7 +791,7 @@ final class Emby: ObservableObject {
         var r = URLRequest(url: c.url!)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        authorize(&r)
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["DeviceProfile": profile])
         if let (data, _) = try? await URLSession.shared.data(for: r),
            let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -765,12 +801,12 @@ final class Emby: ObservableObject {
             let cont = (src["Container"] as? String ?? "").lowercased().split(separator: ",").map(String.init)
             if canDirect, src["SupportsDirectPlay"] as? Bool == true,
                cont.contains(where: { ["mp4", "m4v", "mov"].contains($0) }) {
-                return URL(string: "\(server)/Videos/\(id)/stream.mp4?Static=true&MediaSourceId=\(sid)&api_key=\(token)")
+                return URL(string: "\(server)/Videos/\(id)/stream.mp4?Static=true&MediaSourceId=\(sid)&\(keyName)=\(token)")
             }
             if let t = src["TranscodingUrl"] as? String { return absolute(Self.fixSubtitle(t, req.sub), noCopy: reencode) }
             if let t = src["DirectStreamUrl"] as? String { return absolute(t, noCopy: reencode) }
         }
-        let fallback = "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&PlaySessionId=\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))&VideoCodec=h264&AudioCodec=aac&api_key=\(token)"
+        let fallback = "\(server)/Videos/\(id)/master.m3u8?MediaSourceId=\(req.sourceId ?? id)&DeviceId=\(deviceId)&PlaySessionId=\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))&VideoCodec=h264&AudioCodec=aac&\(keyName)=\(token)"
         return URL(string: reencode ? Self.withoutVideoCopy(fallback) : fallback)
     }
 }
