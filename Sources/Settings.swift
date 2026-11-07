@@ -684,8 +684,11 @@ struct ServerSettings: View {
                                 // Click the name to rename it (helps tell servers apart)
                                 TextField("Name", text: Binding(get: { srv.name }, set: { emby.renameServer(srv, $0) }))
                                     .textFieldStyle(.plain).fontWeight(.semibold).frame(maxWidth: 220)
-                                Text((srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)") + " · " + emby.kindLabel(srv))
-                                    .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                                HStack(spacing: 4) {
+                                    ConnectionBadge(address: srv.url)
+                                    Text((srv.user.isEmpty ? srv.url : "\(srv.user) · \(srv.url)") + " · " + emby.kindLabel(srv))
+                                        .foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                                }.font(.caption)
                             }
                             Spacer(minLength: 12)
                             if current {

@@ -10,6 +10,7 @@ struct CoveApp: App {
     @AppStorage("theme") private var theme = "apple"
     init() {
         Self.importEmbyFlixSettings()
+        Self.scrubEmbyFlixTokens()
         NSApplication.shared.setActivationPolicy(.regular)
         Self.applyIcon()
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -34,6 +35,15 @@ struct CoveApp: App {
         d.set(true, forKey: "importedEmbyFlix")
         guard let old = d.persistentDomain(forName: "EmbyFlix"), !old.isEmpty else { return }
         for (key, value) in old where d.object(forKey: key) == nil { d.set(value, forKey: key) }
+    }
+
+    /// The EmbyFlix preferences still held a copy of the sign-ins after the import: remove it (Cove's own copy
+    /// moves to the Keychain). Runs at every launch, does nothing once it's gone.
+    static func scrubEmbyFlixTokens() {
+        let d = UserDefaults.standard
+        guard var old = d.persistentDomain(forName: "EmbyFlix"), old["token"] != nil || old["servers"] != nil else { return }
+        old["token"] = nil; old["servers"] = nil
+        d.setPersistentDomain(old, forName: "EmbyFlix")
     }
 
     var body: some Scene {
