@@ -39,6 +39,7 @@ if [ "${1:-}" = "--github" ]; then
   base64 -i "$OUT" | gh secret set CODESIGN_P12 -R J0n4e/cove
   printf '%s' "$PASS" | gh secret set CODESIGN_P12_PASSWORD -R J0n4e/cove
   echo "Secrets CODESIGN_P12 and CODESIGN_P12_PASSWORD are set on J0n4e/cove."
+  echo "Password of $OUT (save it with the file): $PASS"
 else
   echo "Created $OUT. Add two GitHub Actions secrets (repo Settings > Secrets and variables > Actions):"
   echo "  base64 -i $OUT | gh secret set CODESIGN_P12 -R J0n4e/cove"
