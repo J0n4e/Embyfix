@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 
 /// Checks GitHub for a newer full release, downloads it, swaps it in place of the running app and relaunches.
@@ -6,6 +7,9 @@ import SwiftUI
 final class Updater: ObservableObject {
     static let shared = Updater()
     static let repo = "J0n4e/cove"
+    /// Ed25519 public key that release zips are signed with (scripts/make-update-key.swift creates the pair; the
+    /// private half is the COVE_UPDATE_KEY Actions secret). An update installs only if Cove.zip.sig verifies.
+    static let publicKey = ""
 
     enum Status: Equatable { case idle, checking, upToDate, available(String), installing, failed(String) }
     @Published var status: Status = .idle
@@ -17,7 +21,8 @@ final class Updater: ObservableObject {
         let body: String?
         let html_url: String
         let assets: [Asset]
-        struct Asset: Decodable { let name: String; let browser_download_url: String }
+        /// `digest`: "sha256:…", computed by GitHub when the file was uploaded.
+        struct Asset: Decodable { let name: String; let browser_download_url: String; let digest: String? }
     }
 
     /// Raw version from the bundle ("v1.2"), nil when run outside a built app.
@@ -62,6 +67,10 @@ final class Updater: ObservableObject {
             status = .upToDate
             if interactive { alert("You're up to date", "\(AppVersion.pretty(cur)) is the latest version.") }
         }
+    }
+
+    static var signingKey: Curve25519.Signing.PublicKey? {
+        Data(base64Encoded: publicKey).flatMap { try? Curve25519.Signing.PublicKey(rawRepresentation: $0) }
     }
 
     // MARK: Version compare ("v1.2" > "v1.1" > "v1.0" > "v0.10Beta"; a release beats a beta of the same number)
@@ -115,6 +124,13 @@ final class Updater: ObservableObject {
               let url = URL(string: asset.browser_download_url) else {
             fail("This release has no app download."); return
         }
+        guard let key = Self.signingKey else {
+            fail("This copy of Cove can't check update signatures. Download the new version from GitHub instead."); return
+        }
+        guard let sigAsset = rel.assets.first(where: { $0.name == asset.name + ".sig" }),
+              let sigURL = URL(string: sigAsset.browser_download_url) else {
+            fail("This release isn't signed, so it won't be installed. Download it from GitHub if you trust it."); return
+        }
         let target = Bundle.main.bundleURL
         guard target.pathExtension == "app",
               FileManager.default.isWritableFile(atPath: target.deletingLastPathComponent().path) else {
@@ -129,6 +145,16 @@ final class Updater: ObservableObject {
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw Err("Download failed.") }
             let zip = work.appendingPathComponent("update.zip")
             try FileManager.default.moveItem(at: tmp, to: zip)
+            // Before anything in the download is opened: it must be exactly what Cove's release key signed
+            let zipData = try Data(contentsOf: zip)
+            if let d = asset.digest?.lowercased(), d.hasPrefix("sha256:"),
+               d.dropFirst(7) != SHA256.hash(data: zipData).map({ String(format: "%02x", $0) }).joined() {
+                throw Err("The download is damaged (checksum mismatch).")
+            }
+            let (sig, sresp) = try await URLSession.shared.data(from: sigURL)
+            guard (sresp as? HTTPURLResponse)?.statusCode == 200, key.isValidSignature(sig, for: zipData) else {
+                throw Err("The update's signature is not valid, so it was not installed.")
+            }
             let out = work.appendingPathComponent("new")
             guard await run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
             // Any app in the zip (releases ship Cove.app)

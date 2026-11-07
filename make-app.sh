@@ -46,5 +46,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-codesign --force --deep --sign - "$APP"
-echo "Built $APP"
+# Signature: CI passes the release certificate's SHA-1 as CODESIGN_IDENTITY (see scripts/ci-import-cert.sh), so every
+# release is recognized as the same app; local builds stay ad-hoc ("-"). Hardened runtime in both cases.
+IDENTITY="${CODESIGN_IDENTITY:--}"
+codesign --force --deep --options runtime --sign "$IDENTITY" "$APP"
+codesign --verify --strict "$APP"
+echo "Built $APP (signed with ${IDENTITY/#-/ad-hoc signature})"

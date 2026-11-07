@@ -94,7 +94,7 @@ VERSION=v1.14.4 ./make-app.sh   # set the version shown in the app (default: lat
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.14.4` (small releases use X.Y.Z, major ones X.Y)). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build Cove.app** GitHub Actions workflow when a version tag is pushed (for example `v1.15.0`; small releases use X.Y.Z, major ones X.Y). It signs the app and the update, and creates a draft release to write notes for and publish. Full releases are what the in-app updater installs, and only when their update signature verifies; pre-releases are ignored. See [RELEASING.md](RELEASING.md) (one-time key setup included) and [SECURITY.md](SECURITY.md).
 
 ## License
 
