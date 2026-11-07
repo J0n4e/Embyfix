@@ -2357,7 +2357,7 @@ struct DetailView: View {
             glassCircle(played ? "eye.slash" : "eye", help: played ? "Mark as unwatched" : "Mark as watched") {
                 Task { await emby.setPlayed(item.id, !played) }
             }
-            if let t = full?.RemoteTrailers?.first?.Url, let u = URL(string: t) {
+            if let u = SafeLink.url(full?.RemoteTrailers?.first?.Url) {
                 glassCircle("film", help: "Trailer") { NSWorkspace.shared.open(u) }
             }
         }
@@ -2705,7 +2705,7 @@ struct DetailView: View {
                         Text("Links").bold()
                         HStack(spacing: 10) {
                             ForEach(links.indices, id: \.self) { i in
-                                if let n = links[i].Name, let u = links[i].Url.flatMap({ URL(string: $0) }) { Link(n, destination: u) }
+                                if let n = links[i].Name, let u = SafeLink.url(links[i].Url) { Link(n, destination: u) }
                             }
                         }
                     }
@@ -3222,6 +3222,7 @@ final class PlayerModel: ObservableObject {
     // MARK: debug log (~/Library/Logs/Cove.log)
     private func fmt(_ t: Double) -> String { String(format: "%.2fs", t) }
     private func startDebugPolling() {
+        guard DebugLog.enabled else { return }
         logServer()
         debugTimer?.invalidate()
         debugTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
@@ -3229,19 +3230,14 @@ final class PlayerModel: ObservableObject {
         }
     }
     private func logServer() {
-        guard let e = emby else { return }
+        guard DebugLog.enabled, let e = emby else { return }
         let t = now, ev = player?.currentItem?.accessLog()?.events.last
         Task { @MainActor in
             let s = await e.mySessionJSON()
             self.dlog("player \(self.fmt(t)) segs=\(ev?.numberOfMediaRequests ?? 0) stalls=\(ev?.numberOfStalls ?? 0) | server \(s)")
         }
     }
-    func dlog(_ m: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) \(m)\n"
-        let u = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Cove.log")
-        if let h = try? FileHandle(forWritingTo: u) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
-        else { try? Data(line.utf8).write(to: u) }
-    }
+    func dlog(_ m: String) { DebugLog.write(m) }
 
     func seek(to t: Double) {
         let c = max(0, duration > 0 ? min(t, duration - 1) : t)

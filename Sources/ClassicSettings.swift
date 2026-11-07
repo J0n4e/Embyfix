@@ -501,6 +501,7 @@ struct ClassicPlaybackSettings: View {
     @AppStorage("autoSkipIntro") private var autoSkipIntro = true
     @AppStorage("skipSeconds") private var skip = 10
     @AppStorage("clickToPause") private var clickToPause = true
+    @AppStorage("debugLog") private var debugLog = false
 
     var body: some View {
         ClassicSettingsGroup(title: "Playback") {
@@ -517,6 +518,9 @@ struct ClassicPlaybackSettings: View {
             Toggle("Skip intros automatically", isOn: $autoSkipIntro)
             Toggle("Click on the video to play / pause", isOn: $clickToPause)
             Text("When off, clicking the video shows or hides the controls.").font(.caption).foregroundColor(.secondary)
+            Toggle("Write a player debug log", isOn: $debugLog)
+            Text("Saved to ~/Library/Logs/Cove.log (kept under about 1 MB). Leave it off unless you're chasing a playback problem.")
+                .font(.caption).foregroundColor(.secondary)
         }
     }
 }

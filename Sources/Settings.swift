@@ -609,6 +609,7 @@ struct PlaybackSettings: View {
     @AppStorage("skipSeconds") private var skip = 10
     @AppStorage("clickToPause") private var clickToPause = true
     @AppStorage("separatePlayer") private var separatePlayer = false
+    @AppStorage("debugLog") private var debugLog = false
 
     var body: some View {
         PrefSection {
@@ -632,6 +633,8 @@ struct PlaybackSettings: View {
                 }
             }
             PrefNote("With click to pause off, clicking the video shows or hides the controls.")
+            PrefRow(label: "Troubleshooting") { Toggle("Write a player debug log", isOn: $debugLog) }
+            PrefNote("Saved to ~/Library/Logs/Cove.log (kept under about 1 MB). Leave it off unless you're chasing a playback problem.")
         }
     }
 }

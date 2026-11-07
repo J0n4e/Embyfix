@@ -77,7 +77,7 @@ Switching is instant and swaps the whole app, including the Dock icon.
 - Keyboard: Space play/pause (or play the next episode when the Up next card shows), ← → skip, F full screen, E episodes, C chapters, I info, P picture in picture, Esc back.
 
 ### Settings (⌘,)
-General (accent color, background, navigation style), Libraries (**Poster labels**, hover preview, episode layout and description, library list), Subtitles, Playback, Servers (saved servers and **Sign Out**), and About (version, update controls, **Save and load settings** to a file, and **Reset all settings to default**).
+General (accent color, background, navigation style), Libraries (**Poster labels**, hover preview, episode layout and description, library list), Subtitles, Playback (including an optional player debug log, off by default), Servers (saved servers and **Sign Out**, which also ends the session on the server), and About (version, update controls, **Save and load settings** to a file, and **Reset all settings to default**).
 
 > Intro skipping and thumbnail previews depend on your Emby server: intro detection and thumbnail-image extraction must be enabled there.
 
