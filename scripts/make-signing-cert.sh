@@ -2,7 +2,7 @@
 # One-time setup: creates Cove's self-signed code-signing certificate (valid 10 years).
 #
 #   scripts/make-signing-cert.sh            # writes cove-signing.p12 and prints what to do next
-#   scripts/make-signing-cert.sh --github   # also stores it as GitHub Actions secrets with `gh`
+#   scripts/make-signing-cert.sh --github   # also stores it in the GitHub environment "release" with `gh`
 #
 # Why: ad-hoc signatures change with every build, so macOS treats each update as a different app (Keychain
 # prompts after every update). With one stable certificate, every release is recognized as the same app.
