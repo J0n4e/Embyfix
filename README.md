@@ -1,8 +1,8 @@
 # Cove
 
-A Netflix-style native macOS client for [Emby](https://emby.media) and [Jellyfin](https://jellyfin.org), written in SwiftUI.
+A native macOS client for [Emby](https://emby.media) and [Jellyfin](https://jellyfin.org), written in SwiftUI.
 
-**[Download the latest release](https://github.com/J0n4e/cove/releases/latest)**: universal app for Apple Silicon and Intel, macOS 14 or later.
+**[Download the latest release](https://github.com/J0n4e/cove/releases/latest)**: for Macs with Apple Silicon (M1 or later), macOS 14 or later. Intel Macs are not supported.
 
 ## Install
 
@@ -49,7 +49,7 @@ Switching is instant and swaps the whole app, including the Dock icon.
   - sort and filter (watched, unwatched, genre), with an A–Z jump bar
   - **Group by Collection** (⋯ menu) in movie libraries shows each collection as one poster
   - your choices are remembered per library
-- Series pages have a season poster row with unwatched counts and an episode grid or a Netflix-style list (number, still with progress, title, length, summary). A season shows only its unwatched episodes, with a **Show all / Hide watched** link when it has both. Grid cards put the name bottom-left, "S3·E3 · 42m left" top-left and a white progress ring bottom-right. The episode description can be turned off. Episode stills are loaded without server image frames. Movie pages show cast, similar titles and version, audio, subtitle and quality pickers.
+- Series pages have a season poster row with unwatched counts and an episode grid or a list (number, still with progress, title, length, summary). A season shows only its unwatched episodes, with a **Show all / Hide watched** link when it has both. Grid cards put the name bottom-left, "S3·E3 · 42m left" top-left and a white progress ring bottom-right. The episode description can be turned off. Episode stills are loaded without server image frames. Movie pages show cast, similar titles and version, audio, subtitle and quality pickers.
 - **Actor pages:** click anyone in Cast & Crew to see all their movies and shows in your libraries.
 - **Favorites** page like Emby: Favorite Movies, Favorite Shows and Favorite Collections rows; each heading opens the full list. Shows display their run (e.g. 2007 – 2019).
 - Watched/unwatched badges (neutral white-on-dark, so they don't clash with the accent colour).
@@ -87,7 +87,7 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 
 ```sh
 swift run                 # run in development
-./make-app.sh             # build dist/Cove.app (universal, ad-hoc signed)
+./make-app.sh             # build dist/Cove.app (Apple Silicon, ad-hoc signed)
 VERSION=v1.14.4 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
