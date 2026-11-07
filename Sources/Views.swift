@@ -2549,7 +2549,9 @@ struct DetailView: View {
     var episodesList: some View {
         let eps: [Item] = shownEpisodes
         return VStack(alignment: .leading, spacing: 12) {
-            if seasonNumbers.count > 1 && epLayout != "row" { seasonRow }
+            // In every view, so switching views only changes the episodes below: hiding it in row view made the
+            // episodes and the view buttons jump out of sight when switching on shows with many seasons
+            if seasonNumbers.count > 1 { seasonRow }
             episodesHeader
             if epLayout == "row" {
                 ArrowScrollRow(ids: eps.map { $0.id }, itemWidth: 360, spacing: 22, inset: 52) { id in
