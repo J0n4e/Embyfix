@@ -8,8 +8,8 @@ VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo dev)}"
 SHORT=$(echo "$VERSION" | sed -E 's/^v//; s/^([0-9]+(\.[0-9]+)*).*/\1/'); [[ "$SHORT" =~ ^[0-9] ]] || SHORT=0.0
 BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 echo "Version: $VERSION ($SHORT, build $BUILD)"
-swift build -c release --arch arm64 --arch x86_64
-BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+swift build -c release --arch arm64   # Apple Silicon only (Intel Macs are not supported)
+BIN=$(swift build -c release --arch arm64 --show-bin-path)
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
