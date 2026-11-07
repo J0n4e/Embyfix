@@ -37,8 +37,7 @@ struct CoveApp: App {
         for (key, value) in old where d.object(forKey: key) == nil { d.set(value, forKey: key) }
     }
 
-    /// The EmbyFlix preferences still held a copy of the sign-ins after the import: remove it (Cove's own copy
-    /// moves to the Keychain). Runs at every launch, does nothing once it's gone.
+    /// The EmbyFlix preferences still held a copy of the sign-ins after the import: remove it (Cove keeps its own copy). Runs at every launch, does nothing once it's gone.
     static func scrubEmbyFlixTokens() {
         let d = UserDefaults.standard
         guard var old = d.persistentDomain(forName: "EmbyFlix"), old["token"] != nil || old["servers"] != nil else { return }

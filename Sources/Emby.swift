@@ -253,14 +253,14 @@ final class Emby: ObservableObject {
         if let j = await Self.detectJellyfin(server) { isJellyfin = j; d.set(j, forKey: key) }
     }
 
-    /// The list goes to the preferences file without tokens; those live in the Keychain (TokenStore).
+    /// The list, sign-in tokens included, goes to the preferences file (as before 1.15). Keychain storage is
+    /// paused until Cove is signed with an Apple Developer ID: with our self-signed certificate macOS ties each
+    /// Keychain item to one exact build, so every update would ask for Keychain access.
     private func saveServers() {
-        let plain = servers.map { s -> SavedServer in var x = s; x.token = nil; return x }
-        if let data = try? JSONEncoder().encode(plain) { d.set(data, forKey: "servers") }
+        if let data = try? JSONEncoder().encode(servers) { d.set(data, forKey: "servers") }
     }
 
     private func upsert(_ e: SavedServer) {
-        TokenStore.set(e.token, for: e.id)
         if let i = servers.firstIndex(where: { $0.id == e.id }) { servers[i] = e } else { servers.append(e) }
         saveServers()
     }
@@ -290,7 +290,6 @@ final class Emby: ObservableObject {
         // Removing the server we're signed in to (Classic settings allow it) signs out first: its token is revoked
         if e.id == server.lowercased(), loggedIn { logout() }
         else if let t = e.token { revoke(server: e.url, token: t) }
-        TokenStore.set(nil, for: e.id)
         servers.removeAll { $0.id == e.id }
         saveServers()
         ImageCache.shared.clear()
@@ -367,18 +366,21 @@ final class Emby: ObservableObject {
         if list.isEmpty, !server.isEmpty, !legacyToken.isEmpty {
             list = [SavedServer(url: server, name: server, user: "", token: legacyToken, userId: userId)]
         }
-        // Tokens move from the preferences file to the Keychain once; after that they come from the Keychain
-        var moved = !legacyToken.isEmpty
-        for i in list.indices {
-            if let t = list[i].token { TokenStore.set(t, for: list[i].id); moved = true }
-            else { list[i].token = TokenStore.get(list[i].id) }
-            if list[i].id == server.lowercased(), list[i].token == nil, !legacyToken.isEmpty {
-                list[i].token = legacyToken; TokenStore.set(legacyToken, for: list[i].id)
+        // Test builds of the Keychain change put tokens in the Keychain: move any such token back once and delete
+        // the item (Macs that never ran those builds have none, so nothing is asked)
+        var moved = false
+        for i in list.indices where list[i].token == nil {
+            if let t = TokenStore.get(list[i].id) { list[i].token = t; moved = true }
+            if list[i].token == nil, list[i].id == server.lowercased(), !legacyToken.isEmpty {
+                list[i].token = legacyToken; moved = true
             }
         }
         servers = list
-        if moved { saveServers(); d.removeObject(forKey: "token") }
-        // Signed in = a user id for the current server and its token in the Keychain
+        if moved {
+            saveServers()
+            for e in list { TokenStore.set(nil, for: e.id) }
+        }
+        // Signed in = a user id for the current server and its token
         token = userId.isEmpty ? "" : (servers.first { $0.id == server.lowercased() }?.token ?? "")
         if token.isEmpty { userId = "" }
         isJellyfin = d.bool(forKey: "jellyfin-" + server.lowercased())
@@ -422,7 +424,6 @@ final class Emby: ObservableObject {
         if let i = servers.firstIndex(where: { $0.id == server.lowercased() }) {
             servers[i].token = nil; servers[i].userId = nil; saveServers()
         }
-        TokenStore.set(nil, for: server.lowercased())
         resetSession()
         token = ""; userId = ""
         d.removeObject(forKey: "token"); d.removeObject(forKey: "uid")

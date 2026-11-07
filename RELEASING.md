@@ -13,8 +13,9 @@ zip uploaded by hand (or by anyone who gets into the GitHub account) is refused.
    ```
    Put the printed **public key** into `Sources/Updater.swift` (`static let publicKey = "..."`) in a PR.
    Save `update-key.private` in your password manager, then delete it. **Never commit it.**
-2. **Code-signing certificate** (self-signed, gives every release the same identity, so Keychain items keep working
-   across updates):
+2. **Code-signing certificate** (self-signed, gives every release the same identity). Note: without an Apple
+   Developer ID (Team ID) macOS still ties Keychain items to each exact build, so Cove keeps sign-ins in its
+   preferences file for now; Keychain storage returns once releases are signed with a Developer ID:
    ```sh
    scripts/make-signing-cert.sh --github     # creates cove-signing.p12 and sets CODESIGN_P12 / CODESIGN_P12_PASSWORD
    ```
@@ -47,4 +48,4 @@ Anyone can check that a download came from this repository's workflow:
 
 - **Update key:** make a new pair, ship a release that contains the new public key (signed with the OLD key so
   current users can still update), then switch the secret to the new private key.
-- **Certificate:** make a new one and update the two secrets. Users get a one-time Keychain prompt after the next update.
+- **Certificate:** make a new one and update the two secrets.

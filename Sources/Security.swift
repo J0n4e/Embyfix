@@ -68,8 +68,9 @@ enum DebugLog {
     }
 }
 
-/// Sign-in tokens, one Keychain item per saved server (account = the server's address in lower case).
-/// They used to be kept in the preferences file, which any app running as the user could read.
+/// Keychain items for sign-in tokens (one per server, account = the server's address in lower case).
+/// Not used for storage right now (see Emby.saveServers): only read once to move tokens that test builds put
+/// there back to the preferences file, then deleted. Ready for when Cove has an Apple Developer ID.
 enum TokenStore {
     private static let service = "eu.jonae.cove.token"
 
