@@ -62,8 +62,23 @@ Anyone can check that a download came from this repository's workflow:
 
 *Run workflow* on the Actions tab builds an unsigned (ad-hoc) test artifact without creating a release.
 
-## If a key leaks
+## Changing the update key (lost or leaked key)
 
-- **Update key:** make a new pair, ship a release that contains the new public key (signed with the OLD key so
-  current users can still update), then switch the secret to the new private key.
-- **Certificate:** make a new one and update the two secrets in the `release` environment.
+The release job always verifies the signature against the public key in the **latest published release**
+(the key installed apps trust), not the one in the commit being built. A rotation therefore takes one release:
+
+1. On a Mac: `swift scripts/make-update-key.swift`. Save `update-key.private` in your password manager.
+   **Do not** put it into GitHub yet.
+2. PR: put the new public key into `Sources/Updater.swift`.
+3. Tag and publish that release. It is signed with the **old** private key (still in GitHub) and the workflow
+   shows a "Key rotation" notice. Every installed app accepts it and from then on trusts the new key.
+4. Only after it is **published**: set the new key with
+   `gh secret set COVE_UPDATE_KEY --env release -R J0n4e/cove < update-key.private`, delete the old secret,
+   then delete the local file.
+
+The order is enforced: a release signed with the wrong key fails in CI instead of shipping. Users who skip the
+rotation release and update later get "signature is not valid" and must download Cove once from GitHub, so
+leave the rotation release as the latest one for a week or two.
+
+**Certificate:** make a new one and update the two secrets in the `release` environment. It doesn't affect
+updates or sign-ins.

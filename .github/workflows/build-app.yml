@@ -119,11 +119,29 @@ jobs:
         run: cd dist && ditto -c -k --keepParent Cove.app Cove.zip
 
       - name: Sign update
+        # The signature must verify with the key that INSTALLED apps trust, i.e. the public key in the latest
+        # published release, not the one in this commit. They differ only in a key-rotation release, which is
+        # signed with the old key and ships the new public key (see RELEASING.md).
         env:
           COVE_UPDATE_KEY: ${{ secrets.COVE_UPDATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          PUB=$(sed -n 's/.*static let publicKey = "\(.*\)".*/\1/p' Sources/Updater.swift)
-          swift scripts/sign-update.swift dist/Cove.zip $PUB
+          key() { sed -n 's/.*static let publicKey = "\(.*\)".*/\1/p'; }
+          NEW=$(key < Sources/Updater.swift)
+          PREV=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" -q .tag_name 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            TRUSTED=$(git show "$PREV:Sources/Updater.swift" | key)
+          else
+            TRUSTED=$NEW
+          fi
+          [ -n "$TRUSTED" ] || { echo "::error::No public key found in $PREV:Sources/Updater.swift"; exit 1; }
+          if [ "$TRUSTED" != "$NEW" ]; then
+            echo "::notice::Key rotation: signing with the key trusted by $PREV; this release ships a new public key."
+          fi
+          swift scripts/sign-update.swift dist/Cove.zip "$TRUSTED" || {
+            echo "::error::COVE_UPDATE_KEY doesn't match the key installed apps trust ($PREV). During a key rotation the" \
+                 "new private key goes into the 'release' environment only AFTER the rotation release is published."
+            exit 1; }
 
       - name: Attest build provenance
         # Public proof of how the build was made (Sigstore). Best effort: when Sigstore is down the release still
