@@ -313,23 +313,29 @@ final class Emby: ObservableObject {
         return s
     }
 
-    /// Signs in with a remembered token. Returns false if the token no longer works.
-    func resume(_ e: SavedServer) async -> Bool {
+    enum ResumeResult: Equatable { case ok, expired, unreachable }
+
+    /// Signs in with a remembered token. The token is forgotten only when the server rejects it (401/403).
+    /// When the server can't be reached (offline, timeout, server error) it is kept, so the next try still works.
+    func resume(_ e: SavedServer) async -> ResumeResult {
         guard let t = e.token, let u = e.userId,
-              let url = URL(string: "\(e.url)/Users/\(u)") else { return false }
+              let url = URL(string: "\(e.url)/Users/\(u)") else { return .expired }
         var r = URLRequest(url: url)
         authorize(&r, token: t)
         r.timeoutInterval = 10
-        guard let (_, resp) = try? await Net.session.data(for: r),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else {
+        guard let (_, resp) = try? await Net.session.data(for: r) else { return .unreachable }
+        switch (resp as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 200: break
+        case 401, 403:
             var x = e; x.token = nil; x.userId = nil; upsert(x)
-            return false
+            return .expired
+        default: return .unreachable
         }
         resetSession()
         server = e.url; token = t; userId = u
         d.set(server, forKey: "server"); d.set(u, forKey: "uid")
         await refreshServerKind()
-        return true
+        return .ok
     }
 
     private func serverName(_ s: String) async -> String? {
@@ -341,6 +347,11 @@ final class Emby: ObservableObject {
 
     private func resetSession() {
         playing = nil; libs = []; played = [:]; faved = [:]
+        // Resume points and image tags/previews are keyed by item id only, so they must not carry over to
+        // another server or user
+        positions = [:]
+        Self.tagLock.withLock { Self.imageTags = [:] }
+        BlurHash.lock.withLock { BlurHash.hashes = [:] }
     }
 
     /// Back to the server list, staying signed in on this server.
@@ -436,6 +447,8 @@ final class Emby: ObservableObject {
         else { q["Fields"] = "ProductionYear" }
         guard var c = URLComponents(string: server + path) else { throw URLError(.badURL) }
         c.queryItems = q.map { URLQueryItem(name: $0.key, value: $0.value) }
+        // URLComponents leaves "+" as is, and servers read it as a space ("C++", "Love + Death" would fail)
+        c.percentEncodedQuery = c.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         guard let u = c.url else { throw URLError(.badURL) }
         var r = URLRequest(url: u)
         authorize(&r)

@@ -39,8 +39,10 @@ final class ImageCache: @unchecked Sendable {
         urlCache = URLCache(memoryCapacity: 50 * 1024 * 1024, diskCapacity: 500 * 1024 * 1024,
                             directory: Self.directory)
         let cfg = URLSessionConfiguration.default
-        cfg.urlCache = urlCache
-        cfg.requestCachePolicy = .returnCacheDataElseLoad
+        // The session itself caches nothing: it would store each request together with its sign-in headers.
+        // makeTask saves the picture by hand, keyed by the bare link, so the cache on disk holds no token.
+        cfg.urlCache = nil
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.httpMaximumConnectionsPerHost = 6
         cfg.timeoutIntervalForRequest = 60
         // Same redirect rule as the rest of the app: image links carry the token, so never follow them to another host
@@ -49,6 +51,11 @@ final class ImageCache: @unchecked Sendable {
         if !UserDefaults.standard.bool(forKey: "imageCacheTokenFree") {
             urlCache.removeAllCachedResponses()
             UserDefaults.standard.set(true, forKey: "imageCacheTokenFree")
+        }
+        // Up to 1.15 the session also cached each request together with its sign-in headers: drop those once
+        if !UserDefaults.standard.bool(forKey: "imageCacheNoHeaders") {
+            urlCache.removeAllCachedResponses()
+            UserDefaults.standard.set(true, forKey: "imageCacheNoHeaders")
         }
     }
 

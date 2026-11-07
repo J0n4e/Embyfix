@@ -224,6 +224,16 @@ struct GeneralSettings: View {
 
 // MARK: - About
 
+/// Preferences that are app state rather than settings: saved servers and sign-ins, the device id, which
+/// servers are Jellyfin (they contain server addresses) and one-time migration flags. Reset keeps them, and
+/// settings files never contain them (both themes).
+enum InternalPrefs {
+    static let keys: Set<String> = ["server", "token", "uid", "servers", "did", "importedEmbyFlix",
+                                    "imageCacheTokenFree", "imageCacheNoHeaders"]
+    static let prefixes = ["jellyfin-"]
+    static func contains(_ key: String) -> Bool { keys.contains(key) || prefixes.contains { key.hasPrefix($0) } }
+}
+
 /// The last section: app name, version, updates and source link, then Reset.
 struct AboutSettings: View {
     @EnvironmentObject var emby: Emby
@@ -231,14 +241,12 @@ struct AboutSettings: View {
     @State private var confirmReset = false
     @State private var backupMessage: String?
 
-    /// Saved servers and sign-ins: kept by Reset, and never written to or read from a settings file.
-    static let keep: Set<String> = ["server", "token", "uid", "servers", "did", "importedEmbyFlix"]
 
     /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
     /// order and window positions). The saved servers and sign-ins are kept.
     func resetAllSettings() {
         let d = UserDefaults.standard
-        for key in d.dictionaryRepresentation().keys where !Self.keep.contains(key) {
+        for key in d.dictionaryRepresentation().keys where !InternalPrefs.contains(key) {
             d.removeObject(forKey: key)
         }
         Task { await emby.loadLibs() }
@@ -247,7 +255,7 @@ struct AboutSettings: View {
     /// The app's own preferences (not the system-wide ones UserDefaults also reports), without servers and sign-ins.
     var ownSettings: [String: Any] {
         let domain = Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName
-        return (UserDefaults.standard.persistentDomain(forName: domain) ?? [:]).filter { !Self.keep.contains($0.key) }
+        return (UserDefaults.standard.persistentDomain(forName: domain) ?? [:]).filter { !InternalPrefs.contains($0.key) }
     }
 
     /// Writes the settings to a property list file the user picks.
@@ -280,7 +288,7 @@ struct AboutSettings: View {
             }
             let d = UserDefaults.standard
             for key in ownSettings.keys { d.removeObject(forKey: key) }
-            for (key, value) in loaded where !Self.keep.contains(key) { d.set(value, forKey: key) }
+            for (key, value) in loaded where !InternalPrefs.contains(key) { d.set(value, forKey: key) }
             Task { await emby.loadLibs() }
             backupMessage = "Settings loaded. Quit and reopen the app so the window and player pick up every change."
         } catch {
@@ -650,10 +658,18 @@ struct ServerSettings: View {
         guard srv.token != nil else { emby.switchServer(); dismiss(); return }
         busy = srv.id
         Task {
-            let ok = await emby.resume(srv)
+            let result = await emby.resume(srv)
             busy = nil
-            if !ok { emby.switchServer() }
-            dismiss()
+            switch result {
+            case .ok: dismiss()
+            case .expired: emby.switchServer(); dismiss()    // the server list asks for the password again
+            case .unreachable:
+                // Stay on the current server instead of signing out of it
+                let a = NSAlert()
+                a.messageText = "Couldn't reach \(srv.name)"
+                a.informativeText = "Check that the server is running and try again. You're still connected to \(emby.currentServerName)."
+                a.runModal()
+            }
         }
     }
 

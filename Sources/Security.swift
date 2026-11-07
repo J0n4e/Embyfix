@@ -21,6 +21,10 @@ enum SafeLink {
 enum Net {
     static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
+        // No response cache: API answers (and the requests with our sign-in headers) would otherwise be written
+        // to ~/Library/Caches and stay there after signing out
+        cfg.urlCache = nil
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: cfg, delegate: SameHostRedirects(), delegateQueue: nil)
     }()
 
@@ -114,10 +118,19 @@ enum ConnectionSecurity {
     /// LAN, loopback, link-local, Tailscale (CGNAT range and *.ts.net, both inside its encrypted tunnel) and local names.
     static func isPrivate(_ rawHost: String) -> Bool {
         let h = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if h == "localhost" || !h.contains(".") && !h.contains(":") { return true }       // single-label name
+        guard !h.isEmpty else { return false }
+        // A bare number (http://134744072, http://0x7f000001) is an IP address in disguise, not a local name
+        let numeric = h.allSatisfy(\.isNumber) || h.hasPrefix("0x")
+        if h == "localhost" || !h.contains(".") && !h.contains(":") && !numeric { return true }   // single-label name
         for suffix in [".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".ts.net"] where h.hasSuffix(suffix) { return true }
-        let p = h.split(separator: ".").compactMap { Int($0) }
-        if p.count == 4, p.allSatisfy({ (0...255).contains($0) }), h.split(separator: ".").count == 4 {
+        // Only plain dotted quads: no leading zeros (010 can mean octal 8) or other number forms
+        let parts = h.split(separator: ".", omittingEmptySubsequences: false)
+        func octet(_ s: Substring) -> Bool {
+            !s.isEmpty && s.count <= 3 && s.allSatisfy { $0.isASCII && $0.isNumber } && (s.count == 1 || s.first != "0")
+        }
+        let plain = parts.count == 4 && parts.allSatisfy(octet)
+        let p = plain ? parts.compactMap { Int($0) } : []
+        if plain, p.count == 4, p.allSatisfy({ (0...255).contains($0) }) {
             switch (p[0], p[1]) {
             case (10, _), (127, _), (192, 168), (169, 254): return true
             case (172, 16...31): return true
