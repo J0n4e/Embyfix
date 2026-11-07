@@ -2779,7 +2779,7 @@ enum RemoteControls {
             MPMediaItemPropertyTitle: item.isEpisode ? item.Name : item.heroTitle,
             MPMediaItemPropertyPlaybackDuration: m.duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: m.time,
-            MPNowPlayingInfoPropertyPlaybackRate: m.playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: m.playing ? Double(m.speed) : 0.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
         ]
         if item.isEpisode {
@@ -2834,7 +2834,10 @@ final class PlayerModel: ObservableObject {
     @Published var time: Double = 0
     @Published var duration: Double = 0
     @Published var playing = false
-    @Published var volume: Float = 1 { didSet { player?.volume = volume } }
+    /// Remembered between videos and launches (mute included).
+    @Published var volume: Float = (UserDefaults.standard.object(forKey: "playerVolume") as? NSNumber)?.floatValue ?? 1 {
+        didSet { player?.volume = volume; UserDefaults.standard.set(volume, forKey: "playerVolume") }
+    }
     @Published var subOffset = 0 { didSet { updateCaption(now) } }   // ms, positive = later
     private var obs: NSKeyValueObservation?
     private var cues: [Cue] = []
@@ -3010,19 +3013,21 @@ final class PlayerModel: ObservableObject {
         if r.item.isEpisode, let sid = r.item.SeriesId {
             SeriesLang.set(sid, "sub", idx.flatMap { i in streams.first { $0.Index == i } }.map(subLangName) ?? "off")
         }
-        let wasBurned = sub.map(isImageSub) ?? false
+        // Burned in by the server: an image subtitle, or a text one that couldn't be read (burnIn). Either way
+        // only a new stream can change or remove it, and the next track must not be burned in again.
+        let wasBurned = (sub.map(isImageSub) ?? false) || (req?.burnIn ?? false)
         if let idx {
             if isImageSub(idx) {
-                await restart(emby) { $0.sub = idx }
+                await restart(emby) { $0.sub = idx; $0.burnIn = false }
             } else {
                 sub = idx; req?.sub = idx
-                if wasBurned { await restart(emby) { $0.sub = idx } }
+                if wasBurned { await restart(emby) { $0.sub = idx; $0.burnIn = false } }
                 else { loadCues(emby, r.item.id, r.sourceId, idx) }
             }
         } else {
             subGen += 1
             cues = []; caption = ""; loadingSubs = false; sub = nil; req?.sub = nil; req?.noSub = true
-            if wasBurned { await restart(emby) { $0.sub = nil; $0.noSub = true } }
+            if wasBurned { await restart(emby) { $0.sub = nil; $0.noSub = true; $0.burnIn = false } }
         }
     }
 
@@ -3223,9 +3228,13 @@ final class PlayerModel: ObservableObject {
         guard on else { return }
         keepAlive = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let ps = self.session, let e = self.emby else { return }
-                await e.ping(ps)
-                await e.reportProgress(ps, self.now, paused: true)
+                // Same session and a live player only: after stop() `now` reads 0, which would overwrite the
+                // resume point. The position is read before the awaits.
+                guard let self, let cur = self.session, cur.id == ps.id, self.player != nil, let e = self.emby else { return }
+                let t = self.now
+                await e.ping(cur)
+                guard self.session?.id == ps.id else { return }
+                await e.reportProgress(cur, t, paused: true)
             }
         }
     }
@@ -3312,6 +3321,7 @@ struct PlayerView: View {
     @State private var upNextCancelled = false
     @State private var switching = false
     @State private var escMonitor: Any?
+    @State private var playerWin = WeakWindow()   // the window this player is in
 
     // Subtitle appearance (defaults: normal size, white, drop shadow, transparent, 10% from bottom)
     @AppStorage("subTextSize") private var subTextSize = "normal"
@@ -3449,10 +3459,11 @@ struct PlayerView: View {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
     }
 
+    private static let clockFormat: DateFormatter = { let f = DateFormatter(); f.timeStyle = .short; return f }()
+
     var endClock: String {
         let left = max(0, model.duration - model.time) / Double(max(model.speed, 0.1))
-        let f = DateFormatter(); f.timeStyle = .short
-        return f.string(from: Date().addingTimeInterval(left))
+        return Self.clockFormat.string(from: Date().addingTimeInterval(left))
     }
 
     var body: some View {
@@ -3541,11 +3552,13 @@ struct PlayerView: View {
             }
         }
         .toolbar(.hidden, for: .windowToolbar)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { n in
+            guard playerWin.owns(n.object) else { return }
             isFullScreen = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { n in
+            guard playerWin.owns(n.object) else { return }
             isFullScreen = false
             // Take the keyboard back after leaving full screen, so Esc / Space / F keep working
             (n.object as? NSWindow)?.makeKeyAndOrderFront(nil)
@@ -3555,13 +3568,15 @@ struct PlayerView: View {
         .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
         // Esc: close a panel, else leave full screen (video keeps playing), else close the player.
         // Caught at the app level: AppKit sometimes swallows Esc before SwiftUI's key handlers see it
-        // (after full screen, and in the separate player window).
+        // (after full screen, and in the separate player window). Only in the player's own window: Esc in the
+        // main window must not stop a video playing in the separate one.
+        .background(WindowReader { playerWin.window = $0 })
         .onAppear {
+            let win = playerWin
             escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
-                guard ev.keyCode == 53, NSApp.keyWindow?.attachedSheet == nil,
-                      NSApp.keyWindow?.sheetParent == nil else { return ev }
-                let full = NSApp.keyWindow?.styleMask.contains(.fullScreen) ?? false
-                if panel != nil { panel = nil } else if full { toggleFullScreen() } else { close() }
+                guard ev.keyCode == 53, let w = win.window, ev.window === w,
+                      w.attachedSheet == nil, w.sheetParent == nil else { return ev }
+                if panel != nil { panel = nil } else if w.styleMask.contains(.fullScreen) { toggleFullScreen() } else { close() }
                 return nil
             }
         }
@@ -4316,6 +4331,32 @@ final class PlayerLayerView: NSView {
         CATransaction.commit()
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// A window reference that doesn't keep the window alive.
+final class WeakWindow {
+    weak var window: NSWindow?
+    /// Whether a notification's object is this window (false while the window isn't known yet).
+    func owns(_ object: Any?) -> Bool { window != nil && (object as? NSWindow) === window }
+}
+
+/// Reports the window a view is in, when it's added to one (both themes' players use it to keep keys and
+/// full-screen events to their own window).
+struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+    func makeNSView(context: Context) -> NSView { Probe(onWindow) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class Probe: NSView {
+        let onWindow: (NSWindow?) -> Void
+        init(_ onWindow: @escaping (NSWindow?) -> Void) { self.onWindow = onWindow; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let w = window
+            DispatchQueue.main.async { self.onWindow(w) }
+        }
+    }
 }
 
 struct AVPlayerViewRep: NSViewRepresentable {
