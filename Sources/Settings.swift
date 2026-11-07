@@ -227,6 +227,7 @@ struct GeneralSettings: View {
 /// The last section: app name, version, updates and source link, then Reset.
 struct AboutSettings: View {
     @EnvironmentObject var emby: Emby
+    @State private var cacheBytes = 0
     @State private var confirmReset = false
     @State private var backupMessage: String?
 
@@ -295,6 +296,17 @@ struct AboutSettings: View {
                 Link("github.com/J0n4e/cove", destination: URL(string: "https://github.com/J0n4e/cove/releases")!)
             }
         }
+        PrefSection {
+            PrefRow(label: "Image cache") {
+                HStack(spacing: 10) {
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(cacheBytes), countStyle: .file))
+                        .foregroundColor(.secondary).monospacedDigit()
+                    Button("Clear") { ImageCache.shared.clear(); cacheBytes = ImageCache.shared.diskUsage }
+                }
+            }
+            PrefNote("Posters and banners are saved on this Mac so they show instantly next time (up to 500 MB).")
+        }
+        .onAppear { cacheBytes = ImageCache.shared.diskUsage }
         PrefSection {
             PrefRow(label: "Settings file") {
                 HStack(spacing: 10) {

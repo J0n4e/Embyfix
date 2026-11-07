@@ -12,6 +12,12 @@ struct Item: Identifiable, Decodable, Hashable {
     let SeriesName: String?
     let ParentBackdropItemId: String?
     let BackdropImageTags: [String]?
+    // Image version tags (they change when the artwork changes); used to cache pictures safely
+    let ImageTags: [String: String]?
+    let ParentBackdropImageTags: [String]?
+    let ParentLogoItemId: String?
+    let ParentLogoImageTag: String?
+    let SeriesPrimaryImageTag: String?
     let CollectionType: String?
     let UserData: UD?
     let RunTimeTicks: Int64?
@@ -377,7 +383,11 @@ final class Emby: ObservableObject {
         var r = URLRequest(url: c.url!)
         authorize(&r)
         let (data, _) = try await URLSession.shared.data(for: r)
-        return try JSONDecoder().decode(T.self, from: data)
+        let v = try JSONDecoder().decode(T.self, from: data)
+        if let l = v as? ItemList { Self.remember(l.Items) }
+        else if let l = v as? [Item] { Self.remember(l) }
+        else if let i = v as? Item { Self.remember([i]) }
+        return v
     }
 
     /// This device's session as the server sees it (play state + transcode info).
@@ -426,8 +436,29 @@ final class Emby: ObservableObject {
     }
 
     /// `plain`: skip the server's image enhancers (e.g. the TV-set frame some plugins draw on episode stills).
+    /// Remembers each item's image tags (from any list the server sends), keyed "id|Kind".
+    nonisolated(unsafe) static var imageTags: [String: String] = [:]
+    static let tagLock = NSLock()
+
+    nonisolated static func remember(_ items: [Item]) {
+        tagLock.withLock {
+            for it in items {
+                for (k, v) in it.ImageTags ?? [:] { imageTags[it.Id + "|" + k] = v }
+                if let b = it.BackdropImageTags?.first { imageTags[it.Id + "|Backdrop"] = b }
+                if let p = it.ParentBackdropItemId, let b = it.ParentBackdropImageTags?.first { imageTags[p + "|Backdrop"] = b }
+                if let p = it.ParentLogoItemId, let t = it.ParentLogoImageTag { imageTags[p + "|Logo"] = t }
+                if let p = it.SeriesId, let t = it.SeriesPrimaryImageTag { imageTags[p + "|Primary"] = t }
+            }
+        }
+    }
+
     func image(_ id: String, _ kind: String = "Primary", width: Int = 400, plain: Bool = false) -> URL? {
-        URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&\(keyName)=\(token)"
+        let tag = Self.tagLock.withLock { Self.imageTags[id + "|" + kind] }
+        // quality=80: noticeably smaller files, no visible difference. The tag makes the link change when the
+        // artwork changes, so the saved copy can be trusted until then.
+        return URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&quality=80"
+            + (tag.map { "&tag=\($0)" } ?? "")
+            + "&\(keyName)=\(token)"
             + (plain ? "&EnableImageEnhancers=false" : ""))
     }
 

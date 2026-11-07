@@ -660,7 +660,7 @@ struct SearchView: View {
                     ForEach(people) { p in
                         NavigationLink(value: PersonRef(id: p.Id, name: p.Name)) {
                             VStack(spacing: 6) {
-                                AsyncImage(url: emby.image(p.Id, width: 240)) { img in
+                                CachedImage(url: emby.image(p.Id, width: 240)) { img in
                                     img.resizable().aspectRatio(contentMode: .fill)
                                 } placeholder: {
                                     ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 30)).foregroundColor(.secondary) }
@@ -834,7 +834,7 @@ struct SessionCard: View {
         let transcoding = s.PlayState?.PlayMethod == "Transcode"
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                AsyncImage(url: emby.image(it.SeriesId ?? it.Id, width: 160)) { img in
+                CachedImage(url: emby.image(it.SeriesId ?? it.Id, width: 160)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.white.opacity(0.08) }
                 .frame(width: 64, height: 96).clipped().cornerRadius(4)
@@ -931,7 +931,7 @@ struct PersonView: View {
 
     var header: some View {
         HStack(alignment: .top, spacing: 24) {
-            AsyncImage(url: emby.image(person.id, width: 300)) { img in
+            CachedImage(url: emby.image(person.id, width: 300)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 50)).foregroundColor(.secondary) }
@@ -1062,7 +1062,7 @@ struct Hero: View {
             // Full window width always; height follows the picture's 16:9 shape (460–900 pt). On very wide
             // windows the picture fills the width and is trimmed a little at top and bottom, never side gaps.
             Color.clear.frame(maxWidth: .infinity).frame(height: bannerH)
-                .overlay { Backdrop(id: item.backdropId ?? item.Id, width: 3840) }.clipped()
+                .overlay { Backdrop(id: item.backdropId ?? item.Id, width: min(Int(width * 2), 2560)) }.clipped()   // Retina-sharp, not oversized
                 .id("b" + item.id).transition(.opacity)
             // Dark fade on the left and at the bottom, so the text reads and the page flows into the rows
             LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .init(x: 0.6, y: 0.5))
@@ -1155,7 +1155,7 @@ struct TitleLogo: View {
     var height: CGFloat = 90
     var font: CGFloat = 54
     var body: some View {
-        AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 700)) { phase in
+        CachedImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 700)) { phase in
             if let img = phase.image {
                 img.resizable().aspectRatio(contentMode: .fit)
                     .frame(maxWidth: 420, maxHeight: height, alignment: .bottomLeading)
@@ -1209,7 +1209,7 @@ struct ResumeCard: View {
     }
 
     var body: some View {
-        AsyncImage(url: imageURL) { p in
+        CachedImage(url: imageURL) { p in
             p.resizable().aspectRatio(contentMode: .fill)
         } placeholder: {
             ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
@@ -1299,9 +1299,9 @@ struct FeedView: View {
 struct Backdrop: View {
     @EnvironmentObject var emby: Emby
     let id: String
-    var width: Int = 1600   // banners ask for up to 4K so they stay sharp on large / Retina screens
+    var width: Int = 1600   // the Home banner asks for its own size (window width × 2, at most 2560)
     var body: some View {
-        AsyncImage(url: emby.image(id, "Backdrop", width: width)) { p in
+        CachedImage(url: emby.image(id, "Backdrop", width: width)) { p in
             p.resizable().aspectRatio(contentMode: .fill)
         } placeholder: { Color(white: 0.1) }
     }
@@ -1321,7 +1321,7 @@ struct PosterCard: View {
         NavigationLink(value: item) {
             VStack(alignment: .leading, spacing: 6) {
                 ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: emby.image(item.posterId, width: 360)) { p in
+                    CachedImage(url: emby.image(item.posterId, width: 360)) { p in
                         p.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
                         ZStack { Color(white: 0.15); Text(item.Name).font(.caption).padding(6) }
@@ -1536,7 +1536,7 @@ struct ListRow: View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
             HStack(alignment: .top, spacing: 16) {
-                AsyncImage(url: emby.image(item.posterId, width: 160)) { p in
+                CachedImage(url: emby.image(item.posterId, width: 160)) { p in
                     p.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color(white: 0.15) }
                 .frame(width: 60, height: 90).clipped().cornerRadius(4)
@@ -2031,7 +2031,7 @@ struct CastTile: View {
     let p: Full.Person
     var body: some View {
         VStack(spacing: 6) {
-            AsyncImage(url: emby.image(p.Id, width: 240)) { img in
+            CachedImage(url: emby.image(p.Id, width: 240)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 30)).foregroundColor(.secondary) }
@@ -2426,7 +2426,7 @@ struct DetailView: View {
         let selected: Bool = n == currentSeason
         return Button { season = n } label: {
             VStack(spacing: 8) {
-                AsyncImage(url: emby.image(sItem?.Id ?? item.Id, width: 400)) { img in
+                CachedImage(url: emby.image(sItem?.Id ?? item.Id, width: 400)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     ZStack { Color(white: 0.15); Text(title) }
@@ -2489,7 +2489,7 @@ struct DetailView: View {
             HStack(alignment: .center, spacing: 18) {
                 Text("\(ep.IndexNumber ?? 0)").font(.system(size: 26, weight: .semibold))
                     .foregroundColor(.secondary).frame(width: 40)
-                AsyncImage(url: emby.image(ep.id, width: 480, plain: true)) { img in
+                CachedImage(url: emby.image(ep.id, width: 480, plain: true)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color(white: 0.15) }
                 .frame(width: 220, height: 124).clipped()
@@ -2572,7 +2572,7 @@ struct DetailView: View {
         let pct: Double = ep.UserData?.PlayedPercentage ?? 0
         let hasProgress: Bool = pct > 0 && pct < 100 && !played
         return Button { playEpisode(ep) } label: {
-            AsyncImage(url: emby.image(ep.id, width: 720, plain: true)) { img in
+            CachedImage(url: emby.image(ep.id, width: 720, plain: true)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Color(white: 0.15) }
             .frame(width: 360, height: showEpDesc ? 330 : 203).clipped()
@@ -2626,7 +2626,7 @@ struct DetailView: View {
         return Button { playEpisode(ep) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: emby.image(ep.id, width: 520, plain: true)) { img in
+                    CachedImage(url: emby.image(ep.id, width: 520, plain: true)) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: { Color(white: 0.15) }
                     .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
@@ -4107,7 +4107,7 @@ extension PlayerView {
 
     func upNextCard(_ n: Item) -> some View {
         HStack(spacing: 14) {
-            AsyncImage(url: emby.image(n.Id, "Primary", width: 400, plain: true)) { img in
+            CachedImage(url: emby.image(n.Id, "Primary", width: 400, plain: true)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Color.white.opacity(0.1) }
             .frame(width: 160, height: 90).clipped().cornerRadius(6)
@@ -4202,7 +4202,7 @@ extension PlayerView {
         let played = emby.isPlayed(ep)
         return Button { if !current { panel = nil; play(ep) } } label: {
             HStack(spacing: 12) {
-                AsyncImage(url: emby.image(ep.Id, width: 320, plain: true)) { img in
+                CachedImage(url: emby.image(ep.Id, width: 320, plain: true)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.white.opacity(0.08) }
                 .frame(width: 120, height: 68).clipped().cornerRadius(5)
@@ -4259,7 +4259,7 @@ extension PlayerView {
             HStack(spacing: 14) {
                 Group {
                     if let tag = c.ImageTag {
-                        AsyncImage(url: emby.chapterImage(item.Id, i, tag)) { img in
+                        CachedImage(url: emby.chapterImage(item.Id, i, tag)) { img in
                             img.resizable().aspectRatio(contentMode: .fill)
                         } placeholder: { Color.white.opacity(0.08) }
                     } else { Color.white.opacity(0.08) }
@@ -4446,7 +4446,7 @@ struct HoverPreview: View {
     var body: some View {
         let played = emby.isPlayed(item), fav = emby.isFav(item)
         VStack(alignment: .leading, spacing: 10) {
-            AsyncImage(url: emby.image(item.backdropId ?? item.Id, item.backdropId == nil ? "Primary" : "Backdrop", width: 640)) { img in
+            CachedImage(url: emby.image(item.backdropId ?? item.Id, item.backdropId == nil ? "Primary" : "Backdrop", width: 640)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Color(white: 0.15) }
             .frame(width: 320, height: 180).clipped()
