@@ -199,7 +199,7 @@ struct SavedServer: Codable, Identifiable, Hashable {
 final class Emby: ObservableObject {
     private let d = UserDefaults.standard
     @Published var server = ""
-    @Published var token = ""
+    @Published var token = "" { didSet { updateImageAuth() } }
     @Published var userId = ""
     @Published var libs: [LibPref] = []
     @Published var playing: PlayRequest?
@@ -226,6 +226,12 @@ final class Emby: ObservableObject {
     /// Query name for the token in image / stream / subtitle links.
     var keyName: String { isJellyfin ? "ApiKey" : "api_key" }
 
+    /// Pictures are fetched with the token in headers (not in the link), so the saved image cache holds no token.
+    private func updateImageAuth() {
+        ImageCache.shared.authHeaders = token.isEmpty ? [:]
+            : ["X-Emby-Token": token, "Authorization": authHeader + ", Token=\"\(token)\""]
+    }
+
     /// Adds the token to a request in every form Emby and Jellyfin accept.
     func authorize(_ r: inout URLRequest, token t: String? = nil) {
         let t = t ?? token
@@ -247,6 +253,9 @@ final class Emby: ObservableObject {
         if let j = await Self.detectJellyfin(server) { isJellyfin = j; d.set(j, forKey: key) }
     }
 
+    /// The list, sign-in tokens included, goes to the preferences file (as before 1.15). Keychain storage is
+    /// paused until Cove is signed with an Apple Developer ID: with our self-signed certificate macOS ties each
+    /// Keychain item to one exact build, so every update would ask for Keychain access.
     private func saveServers() {
         if let data = try? JSONEncoder().encode(servers) { d.set(data, forKey: "servers") }
     }
@@ -254,6 +263,17 @@ final class Emby: ObservableObject {
     private func upsert(_ e: SavedServer) {
         if let i = servers.firstIndex(where: { $0.id == e.id }) { servers[i] = e } else { servers.append(e) }
         saveServers()
+    }
+
+    /// Picks https when the user typed no scheme and the server answers on it; otherwise http, as before.
+    static func resolveAddress(_ raw: String) async -> String {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        guard !t.lowercased().hasPrefix("http") else { return normalize(t) }
+        let secure = normalize("https://" + t)
+        if let u = URL(string: secure + "/System/Info/Public"),
+           let (_, r) = try? await Net.session.data(for: URLRequest(url: u, timeoutInterval: 5)),
+           (r as? HTTPURLResponse)?.statusCode == 200 { return secure }
+        return normalize(t)
     }
 
     /// Renames a saved server (empty keeps the old name).
@@ -307,7 +327,7 @@ final class Emby: ObservableObject {
         }
         resetSession()
         server = e.url; token = t; userId = u
-        d.set(server, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
+        d.set(server, forKey: "server"); d.set(u, forKey: "uid")
         await refreshServerKind()
         return true
     }
@@ -339,17 +359,33 @@ final class Emby: ObservableObject {
 
     init() {
         server = d.string(forKey: "server") ?? ""
-        token = d.string(forKey: "token") ?? ""
         userId = d.string(forKey: "uid") ?? ""
-        if let data = d.data(forKey: "servers"),
-           let list = try? JSONDecoder().decode([SavedServer].self, from: data) { servers = list }
+        let legacyToken = d.string(forKey: "token") ?? ""      // versions before 1.15 kept it in preferences
+        var list = (try? JSONDecoder().decode([SavedServer].self, from: d.data(forKey: "servers") ?? Data())) ?? []
+        // Remember the server from before saved servers existed.
+        if list.isEmpty, !server.isEmpty, !legacyToken.isEmpty {
+            list = [SavedServer(url: server, name: server, user: "", token: legacyToken, userId: userId)]
+        }
+        // Test builds of the Keychain change put tokens in the Keychain: move any such token back once and delete
+        // the item (Macs that never ran those builds have none, so nothing is asked)
+        var moved = false
+        for i in list.indices where list[i].token == nil {
+            if let t = TokenStore.get(list[i].id) { list[i].token = t; moved = true }
+            if list[i].token == nil, list[i].id == server.lowercased(), !legacyToken.isEmpty {
+                list[i].token = legacyToken; moved = true
+            }
+        }
+        servers = list
+        if moved {
+            saveServers()
+            for e in list { TokenStore.set(nil, for: e.id) }
+        }
+        // Signed in = a user id for the current server and its token
+        token = userId.isEmpty ? "" : (servers.first { $0.id == server.lowercased() }?.token ?? "")
+        if token.isEmpty { userId = "" }
         isJellyfin = d.bool(forKey: "jellyfin-" + server.lowercased())
         if !server.isEmpty { Task { await refreshServerKind() } }
-        // Remember the server from before saved servers existed.
-        if servers.isEmpty, !server.isEmpty, !token.isEmpty {
-            servers = [SavedServer(url: server, name: server, user: "", token: token, userId: userId)]
-            saveServers()
-        }
+        updateImageAuth()      // didSet doesn't run inside init
     }
 
     var authHeader: String {
@@ -374,7 +410,7 @@ final class Emby: ObservableObject {
         else { throw URLError(.userAuthenticationRequired) }
         resetSession()
         server = s; token = t; userId = u
-        d.set(s, forKey: "server"); d.set(t, forKey: "token"); d.set(u, forKey: "uid")
+        d.set(s, forKey: "server"); d.set(u, forKey: "uid")
         await refreshServerKind()
         let typed = label.trimmingCharacters(in: .whitespaces)
         let name = typed.isEmpty ? (await serverName(s) ?? servers.first { $0.id == s.lowercased() }?.name ?? s) : typed
@@ -430,15 +466,18 @@ final class Emby: ObservableObject {
 
     /// Thumbnail strip for scrubbing previews (Roku BIF format), if the server has generated one.
     func bifData(_ id: String, _ sourceId: String?) async -> Data? {
-        var s = "\(server)/Videos/\(id)/index.bif?Width=320&\(keyName)=\(token)"
+        var s = "\(server)/Videos/\(id)/index.bif?Width=320"
         if let sourceId { s += "&MediaSourceId=\(sourceId)" }
-        guard let u = URL(string: s), let (d, r) = try? await Net.session.data(from: u),
+        guard let u = URL(string: s) else { return nil }
+        var req = URLRequest(url: u)
+        authorize(&req)
+        guard let (d, r) = try? await Net.session.data(for: req),
               (r as? HTTPURLResponse)?.statusCode == 200, d.count > 64 else { return nil }
         return d
     }
 
     func chapterImage(_ id: String, _ index: Int, _ tag: String) -> URL? {
-        URL(string: "\(server)/Items/\(id)/Images/Chapter/\(index)?maxWidth=320&tag=\(tag)&\(keyName)=\(token)")
+        URL(string: "\(server)/Items/\(id)/Images/Chapter/\(index)?maxWidth=320&tag=\(tag)")
     }
 
     /// Debug: this device's session as the server sees it (play state + transcode info), as raw JSON.
@@ -491,9 +530,9 @@ final class Emby: ObservableObject {
         let tag = Self.tagLock.withLock { Self.imageTags[id + "|" + kind] }
         // quality=80: noticeably smaller files, no visible difference. The tag makes the link change when the
         // artwork changes, so the saved copy can be trusted until then.
+        // No token in the link: ImageCache sends it in headers, so the saved copies on disk don't contain it
         return URL(string: "\(server)/Items/\(id)/Images/\(kind)?maxWidth=\(width)&quality=80"
             + (tag.map { "&tag=\($0)" } ?? "")
-            + "&\(keyName)=\(token)"
             + (plain ? "&EnableImageEnhancers=false" : ""))
     }
 
@@ -834,9 +873,10 @@ final class Emby: ObservableObject {
     func subtitleCues(_ itemId: String, _ sourceId: String?, _ index: Int) async -> [Cue]? {
         var sid = sourceId
         if sid == nil { sid = await full(itemId)?.MediaSources?.first?.Id }
-        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt?\(keyName)=\(token)") else { return nil }
+        guard let sid, let u = URL(string: "\(server)/Videos/\(itemId)/\(sid)/Subtitles/\(index)/Stream.srt") else { return nil }
         // Embedded subtitles are extracted from the whole video file the first time, which can take minutes.
         var r = URLRequest(url: u)
+        authorize(&r)
         r.timeoutInterval = 600
         guard let (data, resp) = try? await Net.session.data(for: r),
               (resp as? HTTPURLResponse)?.statusCode == 200,

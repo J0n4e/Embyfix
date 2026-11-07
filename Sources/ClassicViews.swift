@@ -133,7 +133,7 @@ struct ClassicLoginView: View {
                             .help("Signed in")
                     }
                 }
-                Text(s.name).font(.headline).lineLimit(1)
+                HStack(spacing: 5) { ConnectionBadge(address: s.url).font(.caption); Text(s.name).font(.headline).lineLimit(1) }
                 Text((s.user.isEmpty ? s.url : "\(s.user) · \(s.url)") + " · " + emby.kindLabel(s))
                     .font(.caption).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
             }
@@ -194,7 +194,10 @@ struct ClassicLoginView: View {
         guard !busy else { return }
         busy = true; error = ""
         Task {
-            do { try await emby.login(server: server, user: user, pw: pw, name: serverLabel); pw = ""; adding = false }
+            // https when the server has it; warn before a password goes out unencrypted over the internet
+            let address = await Emby.resolveAddress(server)
+            if ConnectionSecurity.kind(address) == .remotePlain, !ConnectionSecurity.confirmPlainHTTP(address) { busy = false; return }
+            do { try await emby.login(server: address, user: user, pw: pw, name: serverLabel); pw = ""; adding = false }
             catch { self.error = "Couldn't sign in. Check server address and credentials." }
             busy = false
         }

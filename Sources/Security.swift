@@ -1,4 +1,7 @@
+import AppKit
 import Foundation
+import Security
+import SwiftUI
 
 // Small security helpers shared by both themes.
 
@@ -61,6 +64,100 @@ enum DebugLog {
             }
             if let h = try? FileHandle(forWritingTo: u) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
             else { try? Data(line.utf8).write(to: u) }
+        }
+    }
+}
+
+/// Keychain items for sign-in tokens (one per server, account = the server's address in lower case).
+/// Not used for storage right now (see Emby.saveServers): only read once to move tokens that test builds put
+/// there back to the preferences file, then deleted. Ready for when Cove has an Apple Developer ID.
+enum TokenStore {
+    private static let service = "eu.jonae.cove.token"
+
+    private static func query(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+    }
+
+    static func get(_ account: String) -> String? {
+        var q = query(account)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    /// nil (or empty) deletes the item.
+    static func set(_ token: String?, for account: String) {
+        let q = query(account)
+        guard let token, !token.isEmpty else { SecItemDelete(q as CFDictionary); return }
+        if get(account) == token { return }
+        let data = Data(token.utf8)
+        if SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+            var add = q
+            add[kSecValueData as String] = data
+            add[kSecAttrLabel as String] = "Cove sign-in (\(account))"
+            SecItemAdd(add as CFDictionary, nil)
+        }
+    }
+}
+
+/// Whether a server address is encrypted, and whether plain http stays on the home network.
+enum ConnectionSecurity {
+    enum Kind { case encrypted, localPlain, remotePlain }
+
+    static func kind(_ address: String) -> Kind {
+        guard let u = URL(string: address), u.scheme?.lowercased() == "http" else { return .encrypted }
+        return isPrivate(u.host ?? "") ? .localPlain : .remotePlain
+    }
+
+    /// LAN, loopback, link-local, Tailscale (CGNAT range and *.ts.net, both inside its encrypted tunnel) and local names.
+    static func isPrivate(_ rawHost: String) -> Bool {
+        let h = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if h == "localhost" || !h.contains(".") && !h.contains(":") { return true }       // single-label name
+        for suffix in [".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".ts.net"] where h.hasSuffix(suffix) { return true }
+        let p = h.split(separator: ".").compactMap { Int($0) }
+        if p.count == 4, p.allSatisfy({ (0...255).contains($0) }), h.split(separator: ".").count == 4 {
+            switch (p[0], p[1]) {
+            case (10, _), (127, _), (192, 168), (169, 254): return true
+            case (172, 16...31): return true
+            case (100, 64...127): return true
+            default: return false
+            }
+        }
+        if h.contains(":") {                                                               // IPv6
+            return h == "::1" || h.hasPrefix("fc") || h.hasPrefix("fd") || h.hasPrefix("fe8") || h.hasPrefix("fe9")
+                || h.hasPrefix("fea") || h.hasPrefix("feb")
+        }
+        return false
+    }
+
+    /// Asked before a password is sent unencrypted over the internet. true = go ahead.
+    @MainActor static func confirmPlainHTTP(_ address: String) -> Bool {
+        let a = NSAlert()
+        a.alertStyle = .warning
+        a.messageText = "This connection isn't encrypted"
+        a.informativeText = "\(address) uses plain http and isn't on your home network, so your password and the "
+            + "sign-in can be read by anyone on the networks in between (for example public Wi-Fi).\n\n"
+            + "If the server has an https address, use that instead."
+        a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: "Sign In Anyway")
+        return a.runModal() == .alertSecondButtonReturn
+    }
+}
+
+/// Lock icon for a saved server: encrypted, plain http at home, or plain http over the internet.
+struct ConnectionBadge: View {
+    let address: String
+    var body: some View {
+        switch ConnectionSecurity.kind(address) {
+        case .encrypted:
+            Image(systemName: "lock.fill").foregroundColor(.secondary).help("Encrypted connection (https)")
+        case .localPlain:
+            Image(systemName: "lock.open").foregroundColor(.secondary).help("Not encrypted (http), on your home network")
+        case .remotePlain:
+            Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                .help("Not encrypted (http) over the internet: the sign-in can be read on the network. Use an https address if the server has one.")
         }
     }
 }

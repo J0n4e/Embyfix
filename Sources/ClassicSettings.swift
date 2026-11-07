@@ -547,6 +547,7 @@ struct ClassicServerSettings: View {
                     Image(systemName: "server.rack").frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
+                            ConnectionBadge(address: s.url).font(.caption)
                             Text(s.name).bold()
                             if s.id == emby.server.lowercased() {
                                 Text("Current").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
