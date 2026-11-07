@@ -22,6 +22,7 @@ After that, Cove keeps itself up to date. It checks for new releases at launch a
 - **Signed updates:** every release is signed, and the in-app updater only installs an update whose signature checks out, so a fake download can't be installed.
 - **Stable code signature:** builds are signed with Cove's own certificate, so macOS recognises each update as the same app.
 - Safer links, sign-out revokes the login on the server, and redirects only to the same server. An optional player debug log can be turned on in Settings → Playback.
+- **https first (v1.15.1):** a server address typed without http/https uses https when the server supports it, and Cove warns before sending a password over plain http to a server outside your home network. Picture links no longer carry your sign-in token.
 
 ### Emby and Jellyfin (v1.13)
 - Works with both **Emby** and **Jellyfin** servers. Cove detects which one a server is and talks to each the way it expects.
@@ -93,7 +94,7 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/Cove.app (Apple Silicon, ad-hoc signed)
-VERSION=v1.15 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.15.1 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
