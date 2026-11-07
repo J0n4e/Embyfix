@@ -596,7 +596,7 @@ struct ClassicSearchView: View {
                     ForEach(people) { p in
                         NavigationLink(value: ClassicPersonRef(id: p.Id, name: p.Name)) {
                             VStack(spacing: 6) {
-                                AsyncImage(url: emby.image(p.Id, width: 240)) { img in
+                                CachedImage(url: emby.image(p.Id, width: 240)) { img in
                                     img.resizable().aspectRatio(contentMode: .fill)
                                 } placeholder: {
                                     ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 30)).foregroundColor(.secondary) }
@@ -769,7 +769,7 @@ struct ClassicSessionCard: View {
         let transcoding = s.PlayState?.PlayMethod == "Transcode"
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                AsyncImage(url: emby.image(it.SeriesId ?? it.Id, width: 160)) { img in
+                CachedImage(url: emby.image(it.SeriesId ?? it.Id, width: 160)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.white.opacity(0.08) }
                 .frame(width: 64, height: 96).clipped().cornerRadius(4)
@@ -865,7 +865,7 @@ struct ClassicPersonView: View {
 
     var header: some View {
         HStack(alignment: .top, spacing: 24) {
-            AsyncImage(url: emby.image(person.id, width: 300)) { img in
+            CachedImage(url: emby.image(person.id, width: 300)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 50)).foregroundColor(.secondary) }
@@ -1063,7 +1063,7 @@ struct ClassicResumeCard: View {
     var body: some View {
         Group {
             VStack(alignment: .leading, spacing: 6) {
-                AsyncImage(url: imageURL) { p in
+                CachedImage(url: imageURL) { p in
                     p.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     ZStack { Color(white: 0.15); Text(item.heroTitle).font(.caption).padding(6) }
@@ -1117,7 +1117,7 @@ struct ClassicBackdrop: View {
     @EnvironmentObject var emby: Emby
     let id: String
     var body: some View {
-        AsyncImage(url: emby.image(id, "Backdrop", width: 1600)) { p in
+        CachedImage(url: emby.image(id, "Backdrop", width: 1600)) { p in
             p.resizable().aspectRatio(contentMode: .fill)
         } placeholder: { Color(white: 0.1) }
     }
@@ -1138,7 +1138,7 @@ struct ClassicPosterCard: View {
         NavigationLink(value: item) {
             VStack(alignment: .leading, spacing: 6) {
                 ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: emby.image(item.posterId, width: 360)) { p in
+                    CachedImage(url: emby.image(item.posterId, width: 360)) { p in
                         p.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
                         ZStack { Color(white: 0.15); Text(item.Name).font(.caption).padding(6) }
@@ -1374,7 +1374,7 @@ struct ClassicListRow: View {
         let played = emby.isPlayed(item)
         NavigationLink(value: item) {
             HStack(alignment: .top, spacing: 16) {
-                AsyncImage(url: emby.image(item.posterId, width: 160)) { p in
+                CachedImage(url: emby.image(item.posterId, width: 160)) { p in
                     p.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color(white: 0.15) }
                 .frame(width: 60, height: 90).clipped().cornerRadius(4)
@@ -1870,7 +1870,7 @@ struct ClassicCastTile: View {
     let p: Full.Person
     var body: some View {
         VStack(spacing: 6) {
-            AsyncImage(url: emby.image(p.Id, width: 240)) { img in
+            CachedImage(url: emby.image(p.Id, width: 240)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 ZStack { Color(white: 0.18); Image(systemName: "person.fill").font(.system(size: 30)).foregroundColor(.secondary) }
@@ -1995,7 +1995,7 @@ struct ClassicDetailView: View {
     // Header: poster + info + pickers + buttons
     var header: some View {
         HStack(alignment: .top, spacing: 28) {
-            AsyncImage(url: emby.image(item.id, width: 500)) { img in
+            CachedImage(url: emby.image(item.id, width: 500)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { ZStack { Color(white: 0.15); Text(item.Name).padding() } }
             .frame(width: item.isEpisode ? 320 : 220, height: item.isEpisode ? 180 : 330)
@@ -2196,7 +2196,7 @@ struct ClassicDetailView: View {
         let selected: Bool = n == currentSeason
         return Button { season = n } label: {
             VStack(spacing: 8) {
-                AsyncImage(url: emby.image(sItem?.Id ?? item.Id, width: 400)) { img in
+                CachedImage(url: emby.image(sItem?.Id ?? item.Id, width: 400)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     ZStack { Color(white: 0.15); Text(title) }
@@ -2248,7 +2248,7 @@ struct ClassicDetailView: View {
             HStack(alignment: .center, spacing: 18) {
                 Text("\(ep.IndexNumber ?? 0)").font(.system(size: 26, weight: .semibold))
                     .foregroundColor(.secondary).frame(width: 40)
-                AsyncImage(url: emby.image(ep.id, width: 480, plain: true)) { img in
+                CachedImage(url: emby.image(ep.id, width: 480, plain: true)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color(white: 0.15) }
                 .frame(width: 220, height: 124).clipped()
@@ -2329,7 +2329,7 @@ struct ClassicDetailView: View {
         return Button { playEpisode(ep) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: emby.image(ep.id, width: 520, plain: true)) { img in
+                    CachedImage(url: emby.image(ep.id, width: 520, plain: true)) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: { Color(white: 0.15) }
                     .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
@@ -3244,7 +3244,7 @@ struct ClassicPlayerView: View {
             // The classicPill that used to sit here is hidden (kept, not deleted): in full screen Esc does the job, and in a
             // window it moved to the title bar (titleBarBack, now off too). Set inPlayerBackPill to true to bring it back.
             if Self.inPlayerBackPill { ClassicBackPill { back() }.help(isFullScreen ? "Exit full screen (Esc)" : "Back (Esc)") }
-            AsyncImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
+            CachedImage(url: emby.image(item.SeriesId ?? item.Id, "Logo", width: 400)) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
             } placeholder: { EmptyView() }
             .frame(maxWidth: 160, maxHeight: 40, alignment: .leading)
@@ -3654,7 +3654,7 @@ extension ClassicPlayerView {
 
     func classicUpNextCard(_ n: Item) -> some View {
         HStack(spacing: 14) {
-            AsyncImage(url: emby.image(n.Id, "Primary", width: 400, plain: true)) { img in
+            CachedImage(url: emby.image(n.Id, "Primary", width: 400, plain: true)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Color.white.opacity(0.1) }
             .frame(width: 160, height: 90).clipped().cornerRadius(6)
@@ -3749,7 +3749,7 @@ extension ClassicPlayerView {
         let played = emby.isPlayed(ep)
         return Button { if !current { panel = nil; play(ep) } } label: {
             HStack(spacing: 12) {
-                AsyncImage(url: emby.image(ep.Id, width: 320, plain: true)) { img in
+                CachedImage(url: emby.image(ep.Id, width: 320, plain: true)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.white.opacity(0.08) }
                 .frame(width: 120, height: 68).clipped().cornerRadius(5)
@@ -3806,7 +3806,7 @@ extension ClassicPlayerView {
             HStack(spacing: 14) {
                 Group {
                     if let tag = c.ImageTag {
-                        AsyncImage(url: emby.chapterImage(item.Id, i, tag)) { img in
+                        CachedImage(url: emby.chapterImage(item.Id, i, tag)) { img in
                             img.resizable().aspectRatio(contentMode: .fill)
                         } placeholder: { Color.white.opacity(0.08) }
                     } else { Color.white.opacity(0.08) }
@@ -3993,7 +3993,7 @@ struct ClassicHoverPreview: View {
     var body: some View {
         let played = emby.isPlayed(item), fav = emby.isFav(item)
         VStack(alignment: .leading, spacing: 10) {
-            AsyncImage(url: emby.image(item.backdropId ?? item.Id, item.backdropId == nil ? "Primary" : "Backdrop", width: 640)) { img in
+            CachedImage(url: emby.image(item.backdropId ?? item.Id, item.backdropId == nil ? "Primary" : "Backdrop", width: 640)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Color(white: 0.15) }
             .frame(width: 320, height: 180).clipped()
