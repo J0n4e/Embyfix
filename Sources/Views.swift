@@ -2557,7 +2557,7 @@ struct DetailView: View {
                 }
             } else if epLayout == "grid" {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 18)], spacing: 22) {
-                    ForEach(eps) { ep in episodeTile(ep) }
+                    ForEach(eps) { ep in episodeCard(ep, fill: true) }
                 }.padding(.horizontal, 52)
             } else {
                 ForEach(eps) { ep in episodeRow(ep) }
@@ -2580,26 +2580,23 @@ struct DetailView: View {
     }
 
 
-    /// "S3·E3" plus " · 42m left" when the episode is partly watched.
-    func episodeInfo(_ ep: Item, hasProgress: Bool) -> String {
-        var t = "S\(ep.ParentIndexNumber ?? 0)·E\(ep.IndexNumber ?? 0)"
-        if hasProgress, let total = ep.RunTimeTicks, total > 0 {
-            let left = max(0, total - (ep.UserData?.PlaybackPositionTicks ?? 0))
-            t += " · " + runtimeText(left) + " left"
-        }
-        return t
-    }
-
     /// Apple TV episode card: still with "EPISODE 1", the title, summary and "▶ 59m" over a dark fade.
-    func episodeCard(_ ep: Item) -> some View {
+    /// `fill`: the card fills its grid column (same shape as the 360-wide card in the row) instead of a fixed width.
+    func episodeCard(_ ep: Item, fill: Bool = false) -> some View {
         let played: Bool = emby.isPlayed(ep)
         let pct: Double = ep.UserData?.PlayedPercentage ?? 0
         let hasProgress: Bool = pct > 0 && pct < 100 && !played
+        let height: CGFloat = showEpDesc ? 330 : 203
         return Button { playEpisode(ep) } label: {
-            CachedImage(url: emby.image(ep.id, width: 720, plain: true)) { img in
-                img.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: { Color(white: 0.15) }
-            .frame(width: 360, height: showEpDesc ? 330 : 203).clipped()
+            Group {
+                if fill {
+                    Color.clear.frame(minWidth: 0, maxWidth: .infinity).aspectRatio(360 / height, contentMode: .fit)
+                        .overlay { episodeStill(ep) }
+                } else {
+                    episodeStill(ep).frame(width: 360, height: height)
+                }
+            }
+            .clipped()
             .overlay(alignment: .bottomLeading) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("EPISODE \(ep.IndexNumber ?? 0)").font(.system(size: 12, weight: .medium)).opacity(0.7)
@@ -2643,57 +2640,10 @@ struct DetailView: View {
         }
     }
 
-    func episodeTile(_ ep: Item) -> some View {
-        let played: Bool = emby.isPlayed(ep)
-        let pct: Double = ep.UserData?.PlayedPercentage ?? 0
-        let hasProgress: Bool = pct > 0 && pct < 100 && !played
-        return Button { playEpisode(ep) } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                ZStack(alignment: .topTrailing) {
-                    CachedImage(url: emby.image(ep.id, width: 520, plain: true)) { img in
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: { Color(white: 0.15) }
-                    .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit)
-                    .clipped()
-                    .opacity(played ? 0.6 : 1)
-                    WatchBadge(item: ep, played: played).padding(6)
-                }
-                // Episode name in the bottom-left corner of the thumbnail
-                .overlay(alignment: .bottomLeading) {
-                    Text(ep.Name).font(.system(size: 14, weight: .semibold)).foregroundColor(.white).lineLimit(2)
-                        .shadow(color: .black.opacity(0.8), radius: 3)
-                        .padding(.leading, 10).padding(.trailing, hasProgress ? 40 : 10)
-                        .padding(.top, 28).padding(.bottom, hasProgress ? 12 : 9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LinearGradient(colors: [Color.clear, Color.black.opacity(0.75)],
-                                                   startPoint: .top, endPoint: .bottom))
-                }
-                // Episode number in the top-left corner
-                .overlay(alignment: .topLeading) {
-                    Text(episodeInfo(ep, hasProgress: hasProgress)).font(.caption2.weight(.semibold)).foregroundColor(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Capsule().fill(Color.black.opacity(0.35)))
-                        .padding(8)
-                }
-                // White progress ring in the bottom-right corner
-                .overlay(alignment: .bottomTrailing) {
-                    if hasProgress { ProgressRing(progress: pct / 100).padding(.trailing, 10).padding(.bottom, 12) }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .thinBorder(6)
-                .hoverLift(play: 40)
-                if showEpDesc {
-                    Text(ep.Overview ?? "").font(.caption).foregroundColor(.secondary).lineLimit(2)
-                }
-            }.contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button("Play from Beginning") { playEpisode(ep, from: 0) }
-            Button(played ? "Mark as unwatched" : "Mark as watched") {
-                Task { await emby.setPlayed(ep.id, !played) }
-            }
-        }
+    func episodeStill(_ ep: Item) -> some View {
+        CachedImage(url: emby.image(ep.id, width: 720, plain: true)) { img in
+            img.resizable().aspectRatio(contentMode: .fill)
+        } placeholder: { Color(white: 0.15) }
     }
 
     var boxGrid: some View {
