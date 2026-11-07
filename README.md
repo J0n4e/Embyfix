@@ -18,6 +18,11 @@ After that, Cove keeps itself up to date. It checks for new releases at launch a
 
 ## Features
 
+### Security (v1.15)
+- **Signed updates:** every release is signed, and the in-app updater only installs an update whose signature checks out, so a fake download can't be installed.
+- **Stable code signature:** builds are signed with Cove's own certificate, so macOS recognises each update as the same app.
+- Safer links, sign-out revokes the login on the server, and redirects only to the same server. An optional player debug log can be turned on in Settings → Playback.
+
 ### Emby and Jellyfin (v1.13)
 - Works with both **Emby** and **Jellyfin** servers. Cove detects which one a server is and talks to each the way it expects.
 - **Add Server** has an optional **Name** field, and saved servers can be renamed in Settings → Servers (click the name). Each server shows whether it is Emby or Jellyfin.
@@ -88,13 +93,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/Cove.app (Apple Silicon, ad-hoc signed)
-VERSION=v1.14.4 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.15 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build Cove.app** GitHub Actions workflow when a version tag is pushed (for example `v1.15.0`; small releases use X.Y.Z, major ones X.Y). It signs the app and the update, and creates a draft release to write notes for and publish. Full releases are what the in-app updater installs, and only when their update signature verifies; pre-releases are ignored. See [RELEASING.md](RELEASING.md) (one-time key setup included) and [SECURITY.md](SECURITY.md).
+- Releases are built by the **Build Cove.app** GitHub Actions workflow when a version tag is pushed (for example `v1.15` or `v1.15.1`; small releases use X.Y.Z, major ones X.Y). It signs the app and the update, and creates a draft release to write notes for and publish. Full releases are what the in-app updater installs, and only when their update signature verifies; pre-releases are ignored. See [RELEASING.md](RELEASING.md) (one-time key setup included) and [SECURITY.md](SECURITY.md).
 
 ## License
 
