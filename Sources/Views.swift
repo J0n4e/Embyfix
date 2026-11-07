@@ -2549,9 +2549,8 @@ struct DetailView: View {
     var episodesList: some View {
         let eps: [Item] = shownEpisodes
         return VStack(alignment: .leading, spacing: 12) {
-            // In every view, so switching views only changes the episodes below: hiding it in row view made the
-            // episodes and the view buttons jump out of sight when switching on shows with many seasons
-            if seasonNumbers.count > 1 { seasonRow }
+            // Row view picks the season from the "Season 7" menu; grid and list also show the season posters
+            if seasonNumbers.count > 1 && epLayout != "row" { seasonRow }
             // Extra space below the header, and the header kept in front: a hovered episode card grows a little
             // (hover lift) and could otherwise cover the view buttons and swallow their clicks
             episodesHeader.padding(.bottom, 14).zIndex(1)
