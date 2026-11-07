@@ -96,7 +96,11 @@ struct RootView: View {
         ZStack {
             // Hide (but keep) the screen under an in-window player: AppKit controls such as spinners
             // otherwise draw on top of the video.
-            Group { if emby.loggedIn { HomeView() } else { LoginView() } }
+            Group {
+                // Keyed by server + user: switching servers (Settings → Servers → Connect) rebuilds every page,
+                // so nothing from the previous server (libraries, rows, banner pictures) stays on screen
+                if emby.loggedIn { HomeView().id(emby.server + "|" + emby.userId) } else { LoginView() }
+            }
                 .opacity(inline && emby.playing != nil ? 0 : 1)
                 .allowsHitTesting(!(inline && emby.playing != nil))
             HoverCardLayer()
