@@ -236,7 +236,7 @@ final class Emby: ObservableObject {
     /// Asks the server what it is ("Jellyfin Server" in ProductName) and remembers the answer per server.
     static func detectJellyfin(_ s: String) async -> Bool? {
         guard let u = URL(string: s + "/System/Info/Public"),
-              let (data, _) = try? await URLSession.shared.data(from: u),
+              let (data, _) = try? await Net.session.data(for: URLRequest(url: u, timeoutInterval: 10)),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return ((j["ProductName"] as? String) ?? "").localizedCaseInsensitiveContains("jellyfin")
     }
@@ -267,8 +267,23 @@ final class Emby: ObservableObject {
     func kindLabel(_ e: SavedServer) -> String { d.bool(forKey: "jellyfin-" + e.id) ? "Jellyfin" : "Emby" }
 
     func removeServer(_ e: SavedServer) {
+        // Removing the server we're signed in to (Classic settings allow it) signs out first: its token is revoked
+        if e.id == server.lowercased(), loggedIn { logout() }
+        else if let t = e.token { revoke(server: e.url, token: t) }
         servers.removeAll { $0.id == e.id }
         saveServers()
+        ImageCache.shared.clear()
+    }
+
+    /// Ends the session on the server too, so the token stops working there (and leaves its Devices list).
+    /// Best effort and in the background: signing out must still work when the server can't be reached.
+    private func revoke(server s: String, token t: String) {
+        guard !t.isEmpty, let url = URL(string: s + "/Sessions/Logout") else { return }
+        var r = URLRequest(url: url, timeoutInterval: 10)
+        r.httpMethod = "POST"
+        authorize(&r, token: t)
+        let req = r
+        Task.detached { _ = try? await Net.session.data(for: req) }
     }
 
     static func normalize(_ raw: String) -> String {
@@ -285,7 +300,7 @@ final class Emby: ObservableObject {
         var r = URLRequest(url: url)
         authorize(&r, token: t)
         r.timeoutInterval = 10
-        guard let (_, resp) = try? await URLSession.shared.data(for: r),
+        guard let (_, resp) = try? await Net.session.data(for: r),
               (resp as? HTTPURLResponse)?.statusCode == 200 else {
             var x = e; x.token = nil; x.userId = nil; upsert(x)
             return false
@@ -299,7 +314,7 @@ final class Emby: ObservableObject {
 
     private func serverName(_ s: String) async -> String? {
         guard let u = URL(string: s + "/System/Info/Public"),
-              let (data, _) = try? await URLSession.shared.data(from: u),
+              let (data, _) = try? await Net.session.data(for: URLRequest(url: u, timeoutInterval: 10)),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return j["ServerName"] as? String
     }
@@ -344,14 +359,15 @@ final class Emby: ObservableObject {
     /// `name`: what to call the server in the list; empty uses the name the server reports.
     func login(server raw: String, user: String, pw: String, name label: String = "") async throws {
         let s = Self.normalize(raw)
-        var r = URLRequest(url: URL(string: s + "/Users/AuthenticateByName")!)
+        guard let authURL = URL(string: s + "/Users/AuthenticateByName"), authURL.host != nil else { throw URLError(.badURL) }
+        var r = URLRequest(url: authURL)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // Jellyfin only reads `Authorization`; Emby reads either
         r.setValue(authHeader, forHTTPHeaderField: "Authorization")
         r.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
         r.httpBody = try JSONSerialization.data(withJSONObject: ["Username": user, "Pw": pw])
-        let (data, _) = try await URLSession.shared.data(for: r)
+        let (data, _) = try await Net.session.data(for: r)
         guard let j = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let t = j["AccessToken"] as? String,
               let u = (j["User"] as? [String: Any])?["Id"] as? String
@@ -367,6 +383,8 @@ final class Emby: ObservableObject {
 
     /// Signs out of this server: forgets its token but keeps it (and the username) in the list.
     func logout() {
+        revoke(server: server, token: token)
+        ImageCache.shared.clear()
         if let i = servers.firstIndex(where: { $0.id == server.lowercased() }) {
             servers[i].token = nil; servers[i].userId = nil; saveServers()
         }
@@ -380,11 +398,12 @@ final class Emby: ObservableObject {
         // The server leaves the year out unless asked; posters show it under the title
         if let f = q["Fields"] { if !f.contains("ProductionYear") { q["Fields"] = f + ",ProductionYear" } }
         else { q["Fields"] = "ProductionYear" }
-        var c = URLComponents(string: server + path)!
+        guard var c = URLComponents(string: server + path) else { throw URLError(.badURL) }
         c.queryItems = q.map { URLQueryItem(name: $0.key, value: $0.value) }
-        var r = URLRequest(url: c.url!)
+        guard let u = c.url else { throw URLError(.badURL) }
+        var r = URLRequest(url: u)
         authorize(&r)
-        let (data, _) = try await URLSession.shared.data(for: r)
+        let (data, _) = try await Net.session.data(for: r)
         let v = try JSONDecoder().decode(T.self, from: data)
         if let l = v as? ItemList { Self.remember(l.Items) }
         else if let l = v as? [Item] { Self.remember(l) }
@@ -397,7 +416,7 @@ final class Emby: ObservableObject {
         guard let u = URL(string: "\(server)/Sessions?DeviceId=\(deviceId)") else { return nil }
         var r = URLRequest(url: u)
         authorize(&r)
-        guard let (d, _) = try? await URLSession.shared.data(for: r),
+        guard let (d, _) = try? await Net.session.data(for: r),
               let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
         return arr.first
     }
@@ -413,7 +432,7 @@ final class Emby: ObservableObject {
     func bifData(_ id: String, _ sourceId: String?) async -> Data? {
         var s = "\(server)/Videos/\(id)/index.bif?Width=320&\(keyName)=\(token)"
         if let sourceId { s += "&MediaSourceId=\(sourceId)" }
-        guard let u = URL(string: s), let (d, r) = try? await URLSession.shared.data(from: u),
+        guard let u = URL(string: s), let (d, r) = try? await Net.session.data(from: u),
               (r as? HTTPURLResponse)?.statusCode == 200, d.count > 64 else { return nil }
         return d
     }
@@ -623,7 +642,7 @@ final class Emby: ObservableObject {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         authorize(&r)
         r.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        _ = try? await URLSession.shared.data(for: r)
+        _ = try? await Net.session.data(for: r)
     }
 
     /// One playback as the server tracks it. Emby rejects reports without a PlaySessionId (HTTP 400).
@@ -704,7 +723,7 @@ final class Emby: ObservableObject {
         var r = URLRequest(url: url)
         r.httpMethod = method
         authorize(&r)
-        _ = try? await URLSession.shared.data(for: r)
+        _ = try? await Net.session.data(for: r)
     }
     func setPlayed(_ id: String, _ v: Bool) async {
         played[id] = v
@@ -779,7 +798,9 @@ final class Emby: ObservableObject {
 
     private func absolute(_ path: String, noCopy: Bool = false) -> URL? {
         var s = path.hasPrefix("http") ? path : server + (path.hasPrefix("/") ? path : "/" + path)
-        if !s.contains("api_key=") && !s.contains("ApiKey=") { s += (s.contains("?") ? "&" : "?") + keyName + "=" + token }
+        // The token goes only to the server we signed in to, never to another host named in a server reply
+        let ours = URL(string: s).flatMap { u in URL(string: server).map { Net.sameOrigin(u, $0) } } ?? false
+        if ours, !s.contains("api_key=") && !s.contains("ApiKey=") { s += (s.contains("?") ? "&" : "?") + keyName + "=" + token }
         if noCopy { s = Self.withoutVideoCopy(s) }
         return URL(string: s)
     }
@@ -817,7 +838,7 @@ final class Emby: ObservableObject {
         // Embedded subtitles are extracted from the whole video file the first time, which can take minutes.
         var r = URLRequest(url: u)
         r.timeoutInterval = 600
-        guard let (data, resp) = try? await URLSession.shared.data(for: r),
+        guard let (data, resp) = try? await Net.session.data(for: r),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return nil }
         let cues = Cue.parseSRT(text)
@@ -847,14 +868,15 @@ final class Emby: ObservableObject {
         if let v = req.audio { qi.append(URLQueryItem(name: "AudioStreamIndex", value: String(v))) }
         if let v = req.sub { qi.append(URLQueryItem(name: "SubtitleStreamIndex", value: String(v))) }
         if let v = req.maxBitrate { qi.append(URLQueryItem(name: "MaxStreamingBitrate", value: String(v))) }
-        var c = URLComponents(string: "\(server)/Items/\(id)/PlaybackInfo")!
+        guard var c = URLComponents(string: "\(server)/Items/\(id)/PlaybackInfo") else { return nil }
         c.queryItems = qi
-        var r = URLRequest(url: c.url!)
+        guard let pu = c.url else { return nil }
+        var r = URLRequest(url: pu)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         authorize(&r)
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["DeviceProfile": profile])
-        if let (data, _) = try? await URLSession.shared.data(for: r),
+        if let (data, _) = try? await Net.session.data(for: r),
            let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let list = j["MediaSources"] as? [[String: Any]],
            let src = list.first(where: { ($0["Id"] as? String) == req.sourceId }) ?? list.first {

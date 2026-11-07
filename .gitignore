@@ -5,3 +5,7 @@ xcuserdata/
 DerivedData/
 dist/
 *.zip
+
+# Release secrets created by scripts/make-update-key.swift and scripts/make-signing-cert.sh (never commit)
+update-key.private
+cove-signing.p12

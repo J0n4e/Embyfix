@@ -36,7 +36,8 @@ final class ImageCache: @unchecked Sendable {
         cfg.requestCachePolicy = .returnCacheDataElseLoad
         cfg.httpMaximumConnectionsPerHost = 6
         cfg.timeoutIntervalForRequest = 60
-        session = URLSession(configuration: cfg)
+        // Same redirect rule as the rest of the app: image links carry the token, so never follow them to another host
+        session = URLSession(configuration: cfg, delegate: SameHostRedirects(), delegateQueue: nil)
     }
 
     /// Already decoded and in memory (no waiting, no flash).
