@@ -177,7 +177,7 @@ struct ClassicGeneralSettings: View {
                     Text("Top bar").tag("topbar")
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
             }.padding(.top, 4)
-            Text("Top bar replaces the sidebar with a Netflix-style bar across the top (Home, Favorites, libraries, search and Settings).")
+            Text("Top bar replaces the sidebar with a bar across the top (Home, Favorites, libraries, search and Settings).")
                 .font(.caption).foregroundColor(.secondary)
         }
     }
