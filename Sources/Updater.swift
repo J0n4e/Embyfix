@@ -8,8 +8,9 @@ final class Updater: ObservableObject {
     static let shared = Updater()
     static let repo = "J0n4e/cove"
     /// Ed25519 public key that release zips are signed with (scripts/make-update-key.swift creates the pair; the
-    /// private half is the COVE_UPDATE_KEY Actions secret). An update installs only if Cove.zip.sig verifies.
-    static let publicKey = "2tFf5Vs7tFqaY14cCGQM+I/JG+Xws5bbgGLrG2RcjDk="
+    /// private half is the COVE_UPDATE_KEY secret of the "release" environment). An update installs only if
+    /// Cove.zip.sig verifies. Changing this key needs a rotation release (RELEASING.md).
+    static let publicKey = "0qZwLSzqChcnofE15nvcUzLNEZuAB2SSaC3mdEC5Ysc="
 
     enum Status: Equatable { case idle, checking, upToDate, available(String), installing, failed(String) }
     @Published var status: Status = .idle
