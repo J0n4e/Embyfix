@@ -2552,7 +2552,9 @@ struct DetailView: View {
             // In every view, so switching views only changes the episodes below: hiding it in row view made the
             // episodes and the view buttons jump out of sight when switching on shows with many seasons
             if seasonNumbers.count > 1 { seasonRow }
-            episodesHeader
+            // Extra space below the header, and the header kept in front: a hovered episode card grows a little
+            // (hover lift) and could otherwise cover the view buttons and swallow their clicks
+            episodesHeader.padding(.bottom, 14).zIndex(1)
             if epLayout == "row" {
                 ArrowScrollRow(ids: eps.map { $0.id }, itemWidth: 360, spacing: 22, inset: 52) { id in
                     if let ep = eps.first(where: { $0.id == id }) { episodeCard(ep) }
