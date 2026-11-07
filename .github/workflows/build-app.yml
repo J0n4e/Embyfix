@@ -1,9 +1,17 @@
 name: Build Cove.app
 
-# Run workflow (Actions tab): builds the app as a downloadable artifact, for testing.
-# Push a version tag (git tag v1.15.0 && git push origin v1.15.0): builds, signs and attests the release and
-# creates it as a DRAFT on GitHub. Write the notes and publish it there; the in-app updater only sees published releases.
+# Pull requests (to Development or main): build check, no secrets.
+# Run workflow (Actions tab): builds an ad-hoc signed test app as a downloadable artifact. No secrets.
+# Push a version tag (git tag v1.16.0 && git push origin v1.16.0): the "release" job builds, signs and attests the
+# release and creates it as a DRAFT on GitHub. Write the notes and publish it there; the in-app updater only sees
+# published releases.
+#
+# The signing secrets (CODESIGN_P12, CODESIGN_P12_PASSWORD, COVE_UPDATE_KEY) live in the GitHub Environment
+# "release", which only v* tags may use, and a tag ruleset lets only the owner create v* tags. No other job, branch
+# or pull request can read them. See RELEASING.md.
 on:
+  pull_request:
+    branches: [Development, main]
   workflow_dispatch:
     inputs:
       version:
@@ -16,17 +24,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Build check and test artifact: never touches a secret.
   build:
+    if: github.event_name != 'push'
     runs-on: macos-15
-    permissions:
-      contents: write        # create the draft release (tag builds only)
-      id-token: write        # build provenance attestation (tag builds only)
-      attestations: write
-    env:
-      IS_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-      HAS_CERT: ${{ secrets.CODESIGN_P12 != '' }}
-      HAS_UPDATE_KEY: ${{ secrets.COVE_UPDATE_KEY != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -35,15 +41,61 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
+      - name: Build app bundle (ad-hoc signature)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$VERSION" ]; then unset VERSION; fi
+          ./make-app.sh
+          codesign -dv dist/Cove.app 2>&1 | grep -E 'Identifier|Signature|flags'
+
+      - name: Smoke test (the app starts and keeps running)
+        run: |
+          dist/Cove.app/Contents/MacOS/Cove & PID=$!
+          sleep 15
+          kill -0 $PID || { echo "::error::Cove exited during launch"; exit 1; }
+          kill $PID
+
+      - name: Zip app
+        if: github.event_name == 'workflow_dispatch'
+        run: cd dist && ditto -c -k --keepParent Cove.app Cove.zip
+
+      - name: Upload artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Cove-app
+          path: dist/Cove.zip
+          if-no-files-found: error
+
+  # Signed release: v* tags only. What keeps the secrets away from everything else is the environment's deployment
+  # rule (v* tags only) plus the tag ruleset; the `if` below just skips the job for other events.
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
+    environment: release
+    permissions:
+      contents: write        # create the draft release
+      id-token: write        # build provenance attestation
+      attestations: write
+    env:
+      HAS_CERT: ${{ secrets.CODESIGN_P12 != '' }}
+      HAS_UPDATE_KEY: ${{ secrets.COVE_UPDATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Show Swift version
+        run: swift --version
+
       - name: Check release setup
-        if: env.IS_RELEASE == 'true'
         run: |
           grep -q 'static let publicKey = ""' Sources/Updater.swift && { echo "::error::Updater.publicKey is empty (see RELEASING.md)"; exit 1; }
-          [ "$HAS_UPDATE_KEY" = true ] || { echo "::error::Secret COVE_UPDATE_KEY is missing (see RELEASING.md)"; exit 1; }
-          [ "$HAS_CERT" = true ] || { echo "::error::Secret CODESIGN_P12 is missing (see RELEASING.md)"; exit 1; }
+          [ "$HAS_UPDATE_KEY" = true ] || { echo "::error::Secret COVE_UPDATE_KEY is missing from the 'release' environment (see RELEASING.md)"; exit 1; }
+          [ "$HAS_CERT" = true ] || { echo "::error::Secret CODESIGN_P12 is missing from the 'release' environment (see RELEASING.md)"; exit 1; }
 
       - name: Import signing certificate
-        if: env.HAS_CERT == 'true'
         env:
           CODESIGN_P12: ${{ secrets.CODESIGN_P12 }}
           CODESIGN_P12_PASSWORD: ${{ secrets.CODESIGN_P12_PASSWORD }}
@@ -51,9 +103,8 @@ jobs:
 
       - name: Build app bundle
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ github.ref_name }}
         run: |
-          if [ -z "$VERSION" ]; then unset VERSION; fi
           ./make-app.sh
           codesign -dv dist/Cove.app 2>&1 | grep -E 'Identifier|Authority|Signature|flags'
 
@@ -68,7 +119,6 @@ jobs:
         run: cd dist && ditto -c -k --keepParent Cove.app Cove.zip
 
       - name: Sign update
-        if: env.HAS_UPDATE_KEY == 'true'
         env:
           COVE_UPDATE_KEY: ${{ secrets.COVE_UPDATE_KEY }}
         run: |
@@ -76,7 +126,6 @@ jobs:
           swift scripts/sign-update.swift dist/Cove.zip $PUB
 
       - name: Attest build provenance
-        if: env.IS_RELEASE == 'true'
         # Public proof of how the build was made (Sigstore). Best effort: when Sigstore is down the release still
         # goes out; updates stay protected by the update signature (Cove.zip.sig)
         continue-on-error: true
@@ -94,7 +143,6 @@ jobs:
           if-no-files-found: error
 
       - name: Create draft release
-        if: env.IS_RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
