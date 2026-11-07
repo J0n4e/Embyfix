@@ -184,9 +184,13 @@ struct ClassicLoginView: View {
         guard s.token != nil else { edit(s); return }
         busy = true
         Task {
-            let ok = await emby.resume(s)
+            let result = await emby.resume(s)
             busy = false
-            if !ok { edit(s); error = "Session expired. Enter your password to sign in again." }
+            switch result {
+            case .ok: break
+            case .expired: edit(s); error = "Session expired. Enter your password to sign in again."
+            case .unreachable: error = "Couldn't reach \(s.name). Check that the server is running and try again."
+            }
         }
     }
 

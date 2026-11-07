@@ -141,7 +141,8 @@ final class Updater: ObservableObject {
         status = .installing
         do {
             let work = FileManager.default.temporaryDirectory.appendingPathComponent("CoveUpdate-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
             let (tmp, resp) = try await URLSession.shared.download(from: url)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw Err("Download failed.") }
             let zip = work.appendingPathComponent("update.zip")
@@ -156,8 +157,12 @@ final class Updater: ObservableObject {
             guard (sresp as? HTTPURLResponse)?.statusCode == 200, key.isValidSignature(sig, for: zipData) else {
                 throw Err("The update's signature is not valid, so it was not installed.")
             }
+            // Unzip exactly the bytes that were checked (not the downloaded file, which could change after the check)
+            let verified = work.appendingPathComponent("verified.zip")
+            guard FileManager.default.createFile(atPath: verified.path, contents: zipData,
+                                                 attributes: [.posixPermissions: 0o600]) else { throw Err("Couldn't save the update.") }
             let out = work.appendingPathComponent("new")
-            guard await run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
+            guard await run("/usr/bin/ditto", ["-x", "-k", verified.path, out.path]) == 0 else { throw Err("Couldn't unzip the update.") }
             // Any app in the zip (releases ship Cove.app)
             let found = (try? FileManager.default.contentsOfDirectory(at: out, includingPropertiesForKeys: nil)) ?? []
             guard let newApp = found.first(where: { $0.pathExtension == "app" }) else { throw Err("The download didn't contain the app.") }
@@ -169,22 +174,22 @@ final class Updater: ObservableObject {
     }
 
     /// Hands off to a small shell script that waits for us to quit, swaps the bundle (restoring the old one if
-    /// anything fails), clears quarantine and opens the new app. It is always installed as Cove.app, so a copy
-    /// renamed by hand gets its proper name back with the next update.
+    /// anything fails), clears quarantine and opens the new app. The new app goes exactly where the running one is,
+    /// under the same name, so no other copy of Cove in that folder is touched.
     private func relaunch(replacing target: URL, with newApp: URL, work: URL) throws {
         let script = """
         #!/bin/sh
+        PATH=/usr/bin:/bin:/usr/sbin:/sbin
         while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
-        T="$2"; N="$3"; D="$(dirname "$T")/Cove.app"
+        T="$2"; N="$3"
         rm -rf "$T.old"
-        [ "$D" != "$T" ] && rm -rf "$D"
-        if mv "$T" "$T.old" && ditto "$N" "$D"; then
+        if mv "$T" "$T.old" && ditto "$N" "$T"; then
           rm -rf "$T.old"
         else
-          rm -rf "$D"; mv "$T.old" "$T"; D="$T"
+          rm -rf "$T"; mv "$T.old" "$T"
         fi
-        xattr -dr com.apple.quarantine "$D" 2>/dev/null
-        open "$D"
+        xattr -dr com.apple.quarantine "$T" 2>/dev/null
+        open "$T"
         rm -rf "$4"
         """
         let s = work.appendingPathComponent("swap.sh")
