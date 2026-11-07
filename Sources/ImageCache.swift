@@ -14,6 +14,13 @@ final class ImageCache: @unchecked Sendable {
     let urlCache: URLCache
     private let session: URLSession
     private let lock = NSLock()
+    private var _auth: [String: String] = [:]
+    private let authLock = NSLock()    // separate from `lock`: makeTask runs while `lock` is held
+    /// Sign-in headers for the current server, set by Emby whenever the token changes.
+    var authHeaders: [String: String] {
+        get { authLock.withLock { _auth } }
+        set { authLock.withLock { _auth = newValue } }
+    }
 
     /// A download and how many views are waiting for it (prefetches pin it, so it is never cancelled).
     private final class Job { var task: Task<NSImage?, Never>!; var waiters = 0; var pinned = false }
@@ -38,20 +45,33 @@ final class ImageCache: @unchecked Sendable {
         cfg.timeoutIntervalForRequest = 60
         // Same redirect rule as the rest of the app: image links carry the token, so never follow them to another host
         session = URLSession(configuration: cfg, delegate: SameHostRedirects(), delegateQueue: nil)
+        // Pictures saved by older versions are keyed by links that contain the sign-in token: drop them once
+        if !UserDefaults.standard.bool(forKey: "imageCacheTokenFree") {
+            urlCache.removeAllCachedResponses()
+            UserDefaults.standard.set(true, forKey: "imageCacheTokenFree")
+        }
     }
 
     /// Already decoded and in memory (no waiting, no flash).
     func cached(_ url: URL) -> NSImage? { memory.object(forKey: url as NSURL) }
 
     private func makeTask(_ url: URL, priority: TaskPriority) -> Task<NSImage?, Never> {
-        Task(priority: priority) { [session, memory, urlCache] in
+        let headers = authHeaders
+        return Task(priority: priority) { [session, memory, urlCache] in
+            // Looked up and stored by the bare link (no headers), so a saved copy is found whatever the sign-in
+            let key = URLRequest(url: url)
+            if let c = urlCache.cachedResponse(for: key), let img = NSImage(data: c.data) {
+                memory.setObject(img, forKey: url as NSURL, cost: c.data.count * 4)
+                return img
+            }
             var r = URLRequest(url: url)
-            r.cachePolicy = .returnCacheDataElseLoad
+            r.cachePolicy = .reloadIgnoringLocalCacheData
+            for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
             guard let (data, resp) = try? await session.data(for: r),
                   (resp as? HTTPURLResponse)?.statusCode ?? 200 == 200,
                   let img = NSImage(data: data) else { return nil }
             // Saved copies are kept no matter what caching rules the server sends
-            urlCache.storeCachedResponse(CachedURLResponse(response: resp, data: data), for: r)
+            urlCache.storeCachedResponse(CachedURLResponse(response: resp, data: data), for: key)
             memory.setObject(img, forKey: url as NSURL, cost: data.count * 4)
             return img
         }
