@@ -2137,7 +2137,7 @@ struct DetailView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 30) {
-                    header
+                    header.id("pageTop")
                     pickers
                     if item.isSeries { episodesList }
                     if item.isBox { boxGrid }
@@ -2147,10 +2147,10 @@ struct DetailView: View {
                 }.padding(.bottom, 50)
             }
             // Switching views adds or removes the Seasons posters above the episodes (row view has none), which
-            // pushed the episodes and the view buttons out of sight on long shows: bring the episode header back
+            // pushed the episodes and the view buttons out of sight on long shows: go back to the top of the page
             .onChange(of: epLayout) {
                 DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("episodesHeader", anchor: .top) }
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("pageTop", anchor: .top) }
                 }
             }
         }
@@ -2562,7 +2562,7 @@ struct DetailView: View {
             if seasonNumbers.count > 1 && epLayout != "row" { seasonRow }
             // Extra space below the header, and the header kept in front: a hovered episode card grows a little
             // (hover lift) and could otherwise cover the view buttons and swallow their clicks
-            episodesHeader.padding(.bottom, 14).zIndex(1).id("episodesHeader")
+            episodesHeader.padding(.bottom, 14).zIndex(1)
             if epLayout == "row" {
                 ArrowScrollRow(ids: eps.map { $0.id }, itemWidth: 360, spacing: 22, inset: 52) { id in
                     if let ep = eps.first(where: { $0.id == id }) { episodeCard(ep) }
