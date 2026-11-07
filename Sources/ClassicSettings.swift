@@ -191,14 +191,12 @@ struct ClassicAboutSettings: View {
     @State private var confirmReset = false
     @State private var backupMessage: String?
 
-    /// Saved servers and sign-ins: kept by Reset, and never written to or read from a settings file.
-    static let keep: Set<String> = ["server", "token", "uid", "servers", "did", "importedEmbyFlix"]
 
     /// Forgets every saved preference (colors, layout, filters, hover, subtitle and player settings, library
     /// order and window positions). The saved servers and sign-ins are kept.
     func resetAllSettings() {
         let d = UserDefaults.standard
-        for key in d.dictionaryRepresentation().keys where !Self.keep.contains(key) {
+        for key in d.dictionaryRepresentation().keys where !InternalPrefs.contains(key) {
             d.removeObject(forKey: key)
         }
         Task { await emby.loadLibs() }
@@ -207,7 +205,7 @@ struct ClassicAboutSettings: View {
     /// The app's own preferences (not the system-wide ones UserDefaults also reports), without servers and sign-ins.
     var ownSettings: [String: Any] {
         let domain = Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName
-        return (UserDefaults.standard.persistentDomain(forName: domain) ?? [:]).filter { !Self.keep.contains($0.key) }
+        return (UserDefaults.standard.persistentDomain(forName: domain) ?? [:]).filter { !InternalPrefs.contains($0.key) }
     }
 
     /// Writes the settings to a property list file the user picks.
@@ -240,7 +238,7 @@ struct ClassicAboutSettings: View {
             }
             let d = UserDefaults.standard
             for key in ownSettings.keys { d.removeObject(forKey: key) }
-            for (key, value) in loaded where !Self.keep.contains(key) { d.set(value, forKey: key) }
+            for (key, value) in loaded where !InternalPrefs.contains(key) { d.set(value, forKey: key) }
             Task { await emby.loadLibs() }
             backupMessage = "Settings loaded. Quit and reopen the app so the window and player pick up every change."
         } catch {

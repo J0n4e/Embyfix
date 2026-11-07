@@ -5,6 +5,8 @@ cd "$(dirname "$0")"
 APP=dist/Cove.app
 # Version shown in the app: $VERSION if given (e.g. "v0.5Beta"), else the latest git tag plus commits since.
 VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo dev)}"
+# It goes into Info.plist unescaped, so allow only plain version characters.
+[[ "$VERSION" =~ ^[0-9A-Za-z._+-]{1,64}$ ]] || { echo "error: VERSION '$VERSION' may only contain letters, digits and . _ + -" >&2; exit 1; }
 SHORT=$(echo "$VERSION" | sed -E 's/^v//; s/^([0-9]+(\.[0-9]+)*).*/\1/'); [[ "$SHORT" =~ ^[0-9] ]] || SHORT=0.0
 BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 echo "Version: $VERSION ($SHORT, build $BUILD)"

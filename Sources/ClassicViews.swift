@@ -184,9 +184,13 @@ struct ClassicLoginView: View {
         guard s.token != nil else { edit(s); return }
         busy = true
         Task {
-            let ok = await emby.resume(s)
+            let result = await emby.resume(s)
             busy = false
-            if !ok { edit(s); error = "Session expired. Enter your password to sign in again." }
+            switch result {
+            case .ok: break
+            case .expired: edit(s); error = "Session expired. Enter your password to sign in again."
+            case .unreachable: error = "Couldn't reach \(s.name). Check that the server is running and try again."
+            }
         }
     }
 
@@ -2472,7 +2476,10 @@ final class ClassicPlayerModel: ObservableObject {
     @Published var time: Double = 0
     @Published var duration: Double = 0
     @Published var playing = false
-    @Published var volume: Float = 1 { didSet { player?.volume = volume } }
+    /// Remembered between videos and launches (mute included).
+    @Published var volume: Float = (UserDefaults.standard.object(forKey: "playerVolume") as? NSNumber)?.floatValue ?? 1 {
+        didSet { player?.volume = volume; UserDefaults.standard.set(volume, forKey: "playerVolume") }
+    }
     @Published var subOffset = 0 { didSet { updateCaption(now) } }   // ms, positive = later
     private var obs: NSKeyValueObservation?
     private var cues: [Cue] = []
@@ -2648,19 +2655,21 @@ final class ClassicPlayerModel: ObservableObject {
         if r.item.isEpisode, let sid = r.item.SeriesId {
             SeriesLang.set(sid, "sub", idx.flatMap { i in streams.first { $0.Index == i } }.map(subLangName) ?? "off")
         }
-        let wasBurned = sub.map(isImageSub) ?? false
+        // Burned in by the server: an image subtitle, or a text one that couldn't be read (burnIn). Either way
+        // only a new stream can change or remove it, and the next track must not be burned in again.
+        let wasBurned = (sub.map(isImageSub) ?? false) || (req?.burnIn ?? false)
         if let idx {
             if isImageSub(idx) {
-                await restart(emby) { $0.sub = idx }
+                await restart(emby) { $0.sub = idx; $0.burnIn = false }
             } else {
                 sub = idx; req?.sub = idx
-                if wasBurned { await restart(emby) { $0.sub = idx } }
+                if wasBurned { await restart(emby) { $0.sub = idx; $0.burnIn = false } }
                 else { loadCues(emby, r.item.id, r.sourceId, idx) }
             }
         } else {
             subGen += 1
             cues = []; caption = ""; loadingSubs = false; sub = nil; req?.sub = nil; req?.noSub = true
-            if wasBurned { await restart(emby) { $0.sub = nil; $0.noSub = true } }
+            if wasBurned { await restart(emby) { $0.sub = nil; $0.noSub = true; $0.burnIn = false } }
         }
     }
 
@@ -2861,9 +2870,13 @@ final class ClassicPlayerModel: ObservableObject {
         guard on else { return }
         keepAlive = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let ps = self.session, let e = self.emby else { return }
-                await e.ping(ps)
-                await e.reportProgress(ps, self.now, paused: true)
+                // Same session and a live player only: after stop() `now` reads 0, which would overwrite the
+                // resume point. The position is read before the awaits.
+                guard let self, let cur = self.session, cur.id == ps.id, self.player != nil, let e = self.emby else { return }
+                let t = self.now
+                await e.ping(cur)
+                guard self.session?.id == ps.id else { return }
+                await e.reportProgress(cur, t, paused: true)
             }
         }
     }
@@ -2962,6 +2975,8 @@ struct ClassicPlayerView: View {
     @AppStorage("accent") private var accentName = "red"
     var accent: Color { Theme.accent(accentName) }
     @State private var isFullScreen = false
+    @State private var escMonitor: Any?
+    @State private var playerWin = WeakWindow()   // the window this player is in
     // Remembered across episodes (each episode gets a fresh ClassicPlayerView), so closing the player still leaves full screen
     var enteredFullScreen: Bool {
         get { ClassicPlaybackFlag.shared.enteredFullScreen }
@@ -3081,10 +3096,11 @@ struct ClassicPlayerView: View {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
     }
 
+    private static let clockFormat: DateFormatter = { let f = DateFormatter(); f.timeStyle = .short; return f }()
+
     var endClock: String {
         let left = max(0, model.duration - model.time) / Double(max(model.speed, 0.1))
-        let f = DateFormatter(); f.timeStyle = .short
-        return f.string(from: Date().addingTimeInterval(left))
+        return Self.clockFormat.string(from: Date().addingTimeInterval(left))
     }
 
     var body: some View {
@@ -3171,15 +3187,34 @@ struct ClassicPlayerView: View {
             }
         }
         .toolbar(.hidden, for: .windowToolbar)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in isFullScreen = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in isFullScreen = false }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { n in
+            guard playerWin.owns(n.object) else { return }
+            isFullScreen = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { n in
+            guard playerWin.owns(n.object) else { return }
+            isFullScreen = false
+            // Take the keyboard back after leaving full screen, so Esc / Space / F keep working
+            (n.object as? NSWindow)?.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focused = true }
+        }
         .onKeyPress(.leftArrow) { model.skip(-Double(skipSecs)); poke(); return .handled }
         .onKeyPress(.rightArrow) { model.skip(Double(skipSecs)); poke(); return .handled }
-        .onKeyPress(.escape) {
-            // Esc: close a panel, else leave full screen (video keeps playing), else close the player
-            if panel != nil { panel = nil } else if isFullScreen { toggleFullScreen() } else { close() }
-            return .handled
+        // Esc: close a panel, else leave full screen (video keeps playing), else close the player.
+        // Caught at the app level (AppKit sometimes swallows Esc before SwiftUI sees it, e.g. after full
+        // screen), but only in the player's own window.
+        .background(WindowReader { playerWin.window = $0 })
+        .onAppear {
+            let win = playerWin
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+                guard ev.keyCode == 53, let w = win.window, ev.window === w,
+                      w.attachedSheet == nil, w.sheetParent == nil else { return ev }
+                if panel != nil { panel = nil } else if w.styleMask.contains(.fullScreen) { toggleFullScreen() } else { close() }
+                return nil
+            }
         }
+        .onDisappear { if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil } }
         .task {
             focused = true
             isFullScreen = window?.styleMask.contains(.fullScreen) ?? false

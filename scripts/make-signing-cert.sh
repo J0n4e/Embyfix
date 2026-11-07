@@ -2,7 +2,7 @@
 # One-time setup: creates Cove's self-signed code-signing certificate (valid 10 years).
 #
 #   scripts/make-signing-cert.sh            # writes cove-signing.p12 and prints what to do next
-#   scripts/make-signing-cert.sh --github   # also stores it as GitHub Actions secrets with `gh`
+#   scripts/make-signing-cert.sh --github   # also stores it in the GitHub environment "release" with `gh`
 #
 # Why: ad-hoc signatures change with every build, so macOS treats each update as a different app (Keychain
 # prompts after every update). With one stable certificate, every release is recognized as the same app.
@@ -36,13 +36,14 @@ LEGACY=""; "$OSSL" version | grep -q '^OpenSSL 3' && LEGACY="-legacy"
 chmod 600 "$OUT"
 
 if [ "${1:-}" = "--github" ]; then
-  base64 -i "$OUT" | gh secret set CODESIGN_P12 -R J0n4e/cove
-  printf '%s' "$PASS" | gh secret set CODESIGN_P12_PASSWORD -R J0n4e/cove
-  echo "Secrets CODESIGN_P12 and CODESIGN_P12_PASSWORD are set on J0n4e/cove."
+  base64 -i "$OUT" | gh secret set CODESIGN_P12 --env release -R J0n4e/cove
+  printf '%s' "$PASS" | gh secret set CODESIGN_P12_PASSWORD --env release -R J0n4e/cove
+  echo "Secrets CODESIGN_P12 and CODESIGN_P12_PASSWORD are set in the 'release' environment of J0n4e/cove."
   echo "Password of $OUT (save it with the file): $PASS"
 else
-  echo "Created $OUT. Add two GitHub Actions secrets (repo Settings > Secrets and variables > Actions):"
-  echo "  base64 -i $OUT | gh secret set CODESIGN_P12 -R J0n4e/cove"
-  echo "  gh secret set CODESIGN_P12_PASSWORD -R J0n4e/cove --body '$PASS'"
+  echo "Created $OUT. Add two secrets to the 'release' environment (repo Settings > Environments > release):"
+  echo "  base64 -i $OUT | gh secret set CODESIGN_P12 --env release -R J0n4e/cove"
+  echo "  gh secret set CODESIGN_P12_PASSWORD --env release -R J0n4e/cove    # paste the password when asked"
+  echo "Password of $OUT (save it with the file): $PASS"
 fi
 echo "Keep $OUT and its password in your password manager (losing them means a one-time Keychain prompt for users), then delete $OUT."
