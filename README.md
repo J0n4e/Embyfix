@@ -39,6 +39,7 @@ Switching is instant and swaps the whole app, including the Dock icon.
 - **Player:** big glass back / play-pause / forward circles in the middle; glass groups for picture in picture, full screen and info (top left), volume (top right), and episodes, subtitles, quality, chapters and options (bottom right). The episode and show names sit bottom-left, above a glass scrubber.
 
 ### Browsing
+- **Fast pictures:** posters and banners are saved on your Mac (up to 500 MB, Settings → About shows the size and can clear it), so pictures seen before appear instantly. Cove asks for lighter pictures, loads the next banners and the first posters of each row ahead, shows blurred previews while loading on Jellyfin, and downloads what is on screen first.
 - Sign in to one or more Emby or Jellyfin servers (http or https). Switch between them in Settings → Servers.
 - Home page with a rotating featured banner (white text with a black outline over the picture), Continue Watching, and rows for each library.
 - **Continue Watching** cards show the title bottom-left, "S3·E3 · 42m left" (or the time left for a movie) top-left and a white progress ring bottom-right. The play button resumes; clicking the card opens the series page on that season (or the movie page).
@@ -87,13 +88,13 @@ Requires macOS 14+ and Xcode 15+ (Swift 5.9).
 ```sh
 swift run                 # run in development
 ./make-app.sh             # build dist/Cove.app (universal, ad-hoc signed)
-VERSION=v1.14.2 ./make-app.sh   # set the version shown in the app (default: latest git tag)
+VERSION=v1.14.3 ./make-app.sh   # set the version shown in the app (default: latest git tag)
 ```
 
 ## Development and releases
 
 - Work goes to the **`Development`** branch through pull requests. `Development` is merged into `main` for each release.
-- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.14.2` (small releases use X.Y.Z, major ones X.Y)). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
+- Releases are built by the **Build Cove.app** GitHub Actions workflow, which you start by hand (*Run workflow*, with the version, for example `v1.14.3` (small releases use X.Y.Z, major ones X.Y)). The workflow's zip is attached to a GitHub release. Full releases are what the in-app updater installs; pre-releases are ignored.
 
 ## License
 
