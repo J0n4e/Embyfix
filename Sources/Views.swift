@@ -3226,10 +3226,10 @@ final class PlayerModel: ObservableObject {
             Task { @MainActor in
                 // Same session and a live player only: after stop() `now` reads 0, which would overwrite the
                 // resume point. The position is read before the awaits.
-                guard let self, let cur = self.session, cur.url == ps.url, self.player != nil, let e = self.emby else { return }
+                guard let self, let cur = self.session, cur.id == ps.id, self.player != nil, let e = self.emby else { return }
                 let t = self.now
                 await e.ping(cur)
-                guard self.session?.url == ps.url else { return }
+                guard self.session?.id == ps.id else { return }
                 await e.reportProgress(cur, t, paused: true)
             }
         }
