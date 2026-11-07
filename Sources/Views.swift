@@ -1021,7 +1021,22 @@ struct HomeContent: View {
         }
         .ignoresSafeArea(edges: .top)          // banner runs up under the title bar, as in Apple TV
         .background(bg)
-        .task(id: reloadToken) { rows = await emby.loadHome(); loading = false }
+        .task(id: reloadToken) {
+            rows = await emby.loadHome(); loading = false
+            // Look ahead: the first pictures of every row start downloading right away (low priority)
+            var urls: [URL?] = []
+            for row in rows {
+                for it in row.items.prefix(10) {
+                    if row.feed == .resume || row.feed == .nextUp {
+                        urls.append(it.isEpisode ? emby.image(it.Id, width: 520, plain: true)
+                                                 : emby.image(it.backdropId ?? it.Id, "Backdrop", width: 520))
+                    } else {
+                        urls.append(emby.image(it.posterId, width: 360))
+                    }
+                }
+            }
+            ImageCache.shared.prefetch(urls)
+        }
     }
 }
 
@@ -1134,6 +1149,15 @@ struct Hero: View {
         })
         .foregroundColor(.white)
         .task(id: index) {
+            // Look ahead: the next two banners (picture and title logo) download while this one shows
+            let w = min(Int(width * 2), 2560)
+            var next: [URL?] = []
+            for k in 1...2 where items.count > 1 {
+                let it = items[(index + k) % items.count]
+                next.append(emby.image(it.backdropId ?? it.Id, "Backdrop", width: w))
+                next.append(emby.image(it.SeriesId ?? it.Id, "Logo", width: 700))
+            }
+            ImageCache.shared.prefetch(next)
             try? await Task.sleep(nanoseconds: 9_000_000_000)
             if !Task.isCancelled { step(1) }
         }

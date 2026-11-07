@@ -18,6 +18,8 @@ struct Item: Identifiable, Decodable, Hashable {
     let ParentLogoItemId: String?
     let ParentLogoImageTag: String?
     let SeriesPrimaryImageTag: String?
+    /// Jellyfin only: tiny blurred previews by kind and tag ("Primary": {tag: hash}).
+    let ImageBlurHashes: [String: [String: String]]?
     let CollectionType: String?
     let UserData: UD?
     let RunTimeTicks: Int64?
@@ -448,6 +450,20 @@ final class Emby: ObservableObject {
                 if let p = it.ParentBackdropItemId, let b = it.ParentBackdropImageTags?.first { imageTags[p + "|Backdrop"] = b }
                 if let p = it.ParentLogoItemId, let t = it.ParentLogoImageTag { imageTags[p + "|Logo"] = t }
                 if let p = it.SeriesId, let t = it.SeriesPrimaryImageTag { imageTags[p + "|Primary"] = t }
+                // Blurred previews: match each hash to the item that owns that image (by its tag)
+                for (kind, byTag) in it.ImageBlurHashes ?? [:] {
+                    for (tag, hash) in byTag {
+                        if it.ImageTags?[kind] == tag || (kind == "Backdrop" && it.BackdropImageTags?.first == tag) {
+                            BlurHash.remember(it.Id, kind, hash)
+                        } else if kind == "Backdrop", let p = it.ParentBackdropItemId, it.ParentBackdropImageTags?.first == tag {
+                            BlurHash.remember(p, kind, hash)
+                        } else if kind == "Primary", let p = it.SeriesId, it.SeriesPrimaryImageTag == tag {
+                            BlurHash.remember(p, kind, hash)
+                        } else if kind == "Logo", let p = it.ParentLogoItemId, it.ParentLogoImageTag == tag {
+                            BlurHash.remember(p, kind, hash)
+                        }
+                    }
+                }
             }
         }
     }
